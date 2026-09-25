@@ -1,0 +1,27 @@
+{
+  "name": "outreach-engine",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Internal outreach platform: Excel leads -> research -> personalised email -> Amazon SES -> tracking dashboard",
+  "workspaces": [
+    "packages/shared",
+    "apps/api",
+    "apps/web",
+    "infra/cdk"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build -w packages/shared && npm run build -w apps/api && npm run build -w apps/web",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "test": "npm run test -w apps/api",
+    "test:web": "npm run test -w apps/web",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:worker": "npm run dev:worker -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "lint": "npm run lint -ws --if-present"
+  }
+}

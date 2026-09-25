@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789123542015,
+      "tag": "0000_bright_ghost_rider",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790153467491,
+      "tag": "0001_access_and_sender_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790158814719,
+      "tag": "0002_reply_capture",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mailapp-postgres
+    environment:
+      POSTGRES_USER: mailapp
+      POSTGRES_PASSWORD: mailapp
+      POSTGRES_DB: mailapp
+    ports:
+      - "5433:5432"
+    volumes:
+      - mailapp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailapp -d mailapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mailapp-api
+    command: ["node", "apps/api/dist/server.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://mailapp:mailapp@postgres:5432/mailapp
+      PORT: 4000
+      STORAGE_LOCAL_DIR: /data/storage
+    ports:
+      - "4000:4000"
+    volumes:
+      - mailapp_storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mailapp-worker
+    command: ["node", "apps/api/dist/worker.js"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://mailapp:mailapp@postgres:5432/mailapp
+      STORAGE_LOCAL_DIR: /data/storage
+    volumes:
+      - mailapp_storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  mailapp_pgdata:
+  mailapp_storage:

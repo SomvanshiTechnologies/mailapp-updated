@@ -1,0 +1,55 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "watch": {
+    "include": [
+      "**"
+    ],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "**/*.d.ts",
+      "**/*.js",
+      "node_modules",
+      "test"
+    ]
+  },
+  "context": {
+    "envName": "prod",
+    "region": "ap-south-1",
+    "account": "176032258686",
+    "domainName": "outreach.somvanshitechnologies.digital",
+    "hostedZoneId": "",
+    "certificateArn": "arn:aws:acm:ap-south-1:176032258686:certificate/11374930-18d1-4f92-a6a7-90bcd7286255",
+    "sendingDomain": "",
+    "fromEmail": "vigneyabhatt@somvanshitechnologies.digital",
+    "fromName": "Vigneya Bhatt",
+    "replyTo": "vigneyabhatt@somvanshitechnologies.digital",
+    "inboundEnabled": true,
+    "inboundDomain": "reply.somvanshitechnologies.digital",
+    "alertEmail": "",
+    "dbInstanceClass": "t4g.micro",
+    "apiDesiredCount": 1,
+    "workerDesiredCount": 1,
+    "imageUri": "",
+    "llmModel": "claude-opus-5",
+    "sesDailyCap": 2000,
+    "sesMaxSendRate": 5,
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true,
+    "@aws-cdk/aws-rds:databaseProxyUniqueResourceName": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+    "@aws-cdk/aws-sns-subscriptions:restrictSqsDescryption": true,
+    "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "@aws-cdk/aws-ecs:disableExplicitDeploymentControllerForCircuitBreaker": true,
+    "@aws-cdk/aws-iam:importedRoleStackSafeDefaultPolicyName": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true,
+    "@aws-cdk/aws-kms:aliasNameRef": true,
+    "@aws-cdk/aws-elasticloadbalancingv2:albDualstackWithoutPublicIpv4SecurityGroupRulesDefault": true,
+    "subscribeWebhooks": true
+  }
+}

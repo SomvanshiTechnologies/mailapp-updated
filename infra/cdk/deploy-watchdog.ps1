@@ -76,6 +76,15 @@ for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
       Get-Content $log | Select-String -Pattern "✅|Outputs|Total time|InboundMxRecord|RunMigrationsCommand" | ForEach-Object { $_.Line }
       exit 0
     }
+    # A flaky resolver or connection fails the docker build or asset upload outright instead of
+    # stalling it. Those failures are safe to retry: nothing has reached CloudFormation yet.
+    $transient = Select-String -Path $log -Quiet -Pattern "no such host|i/o timeout|TLS handshake timeout|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|ECONNRESET|connection reset by peer|unexpected EOF"
+    if ($transient -and $attempt -lt $MaxAttempts) {
+      Write-Warning ("[watchdog] cdk exited with code {0} on a network error; retrying in 20s" -f $proc.ExitCode)
+      Get-Content $log -Tail 3
+      Start-Sleep -Seconds 20
+      continue
+    }
     Write-Warning ("[watchdog] cdk exited with code {0}; last lines:" -f $proc.ExitCode)
     Get-Content $log -Tail 25
     exit $proc.ExitCode
@@ -83,5 +92,5 @@ for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
   Start-Sleep -Seconds 5
 }
 
-Write-Error ("[watchdog] gave up after {0} stalled attempts" -f $MaxAttempts)
+Write-Error ("[watchdog] gave up after {0} attempts" -f $MaxAttempts)
 exit 1

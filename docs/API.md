@@ -79,6 +79,7 @@ live in `packages/shared/src/dto.ts`; request schemas live in `packages/shared/s
 | DELETE | `/api/campaigns/:id` | – (only draft/archived) | `{ ok: true }` |
 | GET | `/api/campaigns/:id/leads` | `LeadListQuerySchema` | `Paginated<LeadDto>` |
 | GET | `/api/campaigns/:id/stats` | – | `{ counts: CampaignCounts, timeseries: TimeseriesPoint[] }` |
+| GET | `/api/campaigns/:id/cost` | – | `CampaignCostDto` — spend to date, the projection for the remaining work, the by-model breakdown, the resolved AI config and any batch in flight |
 | GET | `/api/campaigns/:id/export` | – | xlsx download (`Content-Disposition: attachment`) |
 | POST | `/api/campaigns/:id/approve-all` | – | `{ approved: number }` (approves every pending_review email) |
 
@@ -113,6 +114,33 @@ live in `packages/shared/src/dto.ts`; request schemas live in `packages/shared/s
 | DELETE | `/api/suppressions/:id` | – | `{ ok: true }` |
 | POST | `/api/suppressions/import` | multipart `file` (.xlsx/.csv, column `email`) | `{ imported: number }` |
 
+## Models, providers & batches
+
+Model selections are strings of the form `<provider>:<model>`, optionally suffixed with
+`@batch` to route the request through the provider's batch endpoint (half price, results
+arrive asynchronously). A campaign stores only the fields it deliberately overrides in
+`aiConfig`; anything absent inherits the organisation settings.
+
+Costs are carried everywhere as integer **micro-dollars** (1e-6 USD) so sums stay exact;
+`formatUsd()` in `@mailapp/shared` renders them. Every recorded call stores the price it was
+charged, so changing a rate never rewrites history.
+
+| Method | Path | Body / Query | Response |
+|---|---|---|---|
+| GET | `/api/llm/models` | – | `{ models: ModelOptionDto[], providers: ProviderStatusDto[], researchModes, ratesCapturedAt, mockMode }` — every model, with batch variants, rates after overrides, and whether its provider has a key |
+| GET | `/api/llm/providers` | – | `{ providers: ProviderStatusDto[] }` |
+| PUT | `/api/llm/providers/:provider` | `ProviderCredentialSchema` (admin) | `{ providers: ProviderStatusDto[] }` — key is encrypted with `APP_SECRET` and never returned |
+| DELETE | `/api/llm/providers/:provider` | – (admin) | `{ providers: ProviderStatusDto[] }` — falls back to the environment variable |
+| POST | `/api/llm/providers/:provider/test` | – (admin) | `{ ok: boolean, message: string \| null }` |
+| POST | `/api/llm/estimate` | `{ leads, steps, researchModel?, draftModel?, researchMode? }` | `{ estimate: CostEstimate, ai: ResolvedAiConfig, ready: { research, draft } }` — projection for a campaign that may not exist yet |
+| GET | `/api/llm/batches` | `?status=&campaignId=&limit=` | `{ items: BatchDto[], hasPending: boolean }` |
+| POST | `/api/llm/batches/tick` | – (admin) | `{ submitted, polled, applied }` — runs the flush/poll cycle now |
+| POST | `/api/llm/batches/cancel` | `{ campaignId }` (admin) | `{ cancelled: number }` — open batches are cancelled and their leads fall back to synchronous jobs |
+
+Research intensity is one of `normal`, `great`, `advance`; each sets the reasoning effort, the
+web-search and page-fetch budgets, the agentic iteration cap and the expected token spend used
+by the estimator.
+
 ## Analytics
 
 | Method | Path | Query | Response |
@@ -122,7 +150,7 @@ live in `packages/shared/src/dto.ts`; request schemas live in `packages/shared/s
 | GET | `/api/analytics/events` | `?campaignId=&type=&page=&pageSize=` | `Paginated<EmailEventDto>` |
 | GET | `/api/analytics/ses-account` | – | `SesAccountInfo` |
 | GET | `/api/analytics/ses-metrics` | `?hours=24` | `SesMetricsResponse` |
-| GET | `/api/analytics/llm-usage` | `DateRangeQuerySchema` | `{ calls: number, inputTokens: number, outputTokens: number, cacheReadTokens: number, failures: number, avgLatencyMs: number }` |
+| GET | `/api/analytics/llm-usage` | `DateRangeQuerySchema` | `LlmUsageDto` — calls, tokens, `totalMicroUsd`, cost per sent email and per lead, plus breakdowns by model, by purpose and by day |
 
 ## System
 

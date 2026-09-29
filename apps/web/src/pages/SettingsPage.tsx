@@ -1,12 +1,27 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SettingsSchema, type ApprovalMode, type DeliveryMode, type HardRules, type Settings, type SettingsDto, type SystemStatus } from "@mailapp/shared";
+import {
+  BATCH_STRATEGIES,
+  BATCH_STRATEGY_LABELS,
+  SettingsSchema,
+  type ApprovalMode,
+  type BatchStrategy,
+  type DeliveryMode,
+  type HardRules,
+  type ResearchMode,
+  type Settings,
+  type SettingsDto,
+  type SystemStatus,
+} from "@mailapp/shared";
 import { api } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
 import { ChipsInput } from "../components/ChipsInput";
 import { Banner, ErrorBox, Field, PageHeader, Spinner } from "../components/ui";
+import { ModelSelect, ResearchModeSelect, useModelCatalogue } from "../components/ModelSelect";
+import { ProviderKeysCard } from "../components/ProviderKeys";
+import { ModelRatesCard } from "../components/ModelRates";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -16,6 +31,9 @@ export function SettingsPage() {
   const { isAdmin } = useAuth();
   const q = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ settings: SettingsDto }>("/api/settings") });
   const system = useQuery({ queryKey: ["system", "status"], queryFn: () => api.get<SystemStatus>("/api/system/status") });
+  const catalogue = useModelCatalogue();
+  // Set by a model picker's "Add API key" link so the dialog opens on the right provider.
+  const [keyFocus, setKeyFocus] = useState<string | null>(null);
   const [form, setForm] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -30,6 +48,7 @@ export function SettingsPage() {
       toast.success("Settings saved");
       qc.invalidateQueries({ queryKey: ["settings"] });
       qc.invalidateQueries({ queryKey: ["system"] });
+      qc.invalidateQueries({ queryKey: ["llm"] });
     },
     onError: (e) => toast.error(e, "Save failed"),
   });
@@ -169,22 +188,99 @@ export function SettingsPage() {
         </Field>
       </section>
 
+      <ProviderKeysCard
+        providers={catalogue.data?.providers ?? []}
+        readOnly={ro}
+        focusProvider={keyFocus}
+        onFocusHandled={() => setKeyFocus(null)}
+      />
+
       <section className="card space-y-4">
-        <h2 className="text-sm font-semibold">LLM</h2>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Field label="Drafting model">
-            <input className="input" disabled={ro} value={form.llmModel} onChange={(e) => set("llmModel", e.target.value)} />
-          </Field>
+        <div>
+          <h2 className="text-sm font-semibold">Models</h2>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Defaults for every campaign. A campaign can override any of these; green rows in the picker run through the
+            provider's batch endpoint at half price, with results arriving later instead of immediately.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Research model">
-            <input className="input" disabled={ro} value={form.researchModel} onChange={(e) => set("researchModel", e.target.value)} />
+            <ModelSelect
+              value={form.researchModel}
+              onChange={(v) => set("researchModel", v)}
+              catalogue={catalogue.data}
+              disabled={ro}
+              onAddKey={setKeyFocus}
+            />
           </Field>
-          <div className="flex items-end pb-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" disabled={ro} checked={form.webSearchEnabled} onChange={(e) => set("webSearchEnabled", e.target.checked)} /> Use web search in research
-            </label>
-          </div>
+          <Field label="Drafting model">
+            <ModelSelect
+              value={form.llmModel}
+              onChange={(v) => set("llmModel", v)}
+              catalogue={catalogue.data}
+              disabled={ro}
+              onAddKey={setKeyFocus}
+            />
+          </Field>
+        </div>
+        <Field label="Research depth" hint="How hard research digs by default. Each step up costs several times the one below.">
+          <ResearchModeSelect
+            value={form.researchMode}
+            onChange={(v) => set("researchMode", (v || "great") as ResearchMode)}
+            catalogue={catalogue.data}
+            disabled={ro}
+          />
+        </Field>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" disabled={ro} checked={form.webSearchEnabled} onChange={(e) => set("webSearchEnabled", e.target.checked)} /> Use web
+          search in research (only applies to models that support it)
+        </label>
+      </section>
+
+      <section className="card space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold">Batching &amp; cost controls</h2>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Applies when a selected model is a batch model. Batch endpoints halve the price but are asynchronous.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Default batch grouping">
+            <select className="input" disabled={ro} value={form.batchStrategy} onChange={(e) => set("batchStrategy", e.target.value as BatchStrategy)}>
+              {BATCH_STRATEGIES.map((x) => (
+                <option key={x} value={x}>
+                  {BATCH_STRATEGY_LABELS[x]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Rolling flush window (minutes)" hint="Submit a batch once its oldest queued request is this old.">
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={720}
+              disabled={ro || form.batchStrategy !== "rolling"}
+              value={form.batchFlushMinutes}
+              onChange={(e) => set("batchFlushMinutes", num(e.target.value))}
+            />
+          </Field>
+          <Field label="Max requests per batch" hint="A batch is also submitted as soon as it reaches this size.">
+            <input className="input" type="number" min={1} max={50000} disabled={ro} value={form.batchMaxRequests} onChange={(e) => set("batchMaxRequests", num(e.target.value))} />
+          </Field>
+          <Field label="Campaign spend cap (USD)" hint="Refuse to start a campaign projected to cost more than this. 0 disables the check.">
+            <input className="input" type="number" min={0} step={1} disabled={ro} value={form.campaignCostCapUsd} onChange={(e) => set("campaignCostCapUsd", Number(e.target.value) || 0)} />
+          </Field>
         </div>
       </section>
+
+      <ModelRatesCard
+        models={catalogue.data?.models ?? []}
+        capturedAt={catalogue.data?.ratesCapturedAt ?? null}
+        overrides={form.modelRateOverrides}
+        onChange={(v) => set("modelRateOverrides", v)}
+        readOnly={ro}
+      />
 
       <section className="card space-y-4">
         <h2 className="text-sm font-semibold">Hard rules (deterministic validator)</h2>

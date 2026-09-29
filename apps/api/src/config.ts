@@ -29,12 +29,27 @@ const EnvSchema = z.object({
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().min(12).optional(),
 
-  LLM_PROVIDER: z.enum(["anthropic", "mock"]).default("mock"),
+  /**
+   * "mock" forces the offline provider for every call regardless of the selected model.
+   * "live" honours the model chosen in settings, so a campaign can use any provider whose
+   * key is configured. "anthropic" is the historical value and behaves like "live".
+   */
+  LLM_PROVIDER: z.enum(["live", "anthropic", "mock"]).default("mock"),
   ANTHROPIC_API_KEY: z.string().optional().default(""),
-  LLM_MODEL: z.string().default("claude-opus-5"),
-  LLM_RESEARCH_MODEL: z.string().default("claude-opus-5"),
+  OPENAI_API_KEY: z.string().optional().default(""),
+  GEMINI_API_KEY: z.string().optional().default(""),
+  DEEPSEEK_API_KEY: z.string().optional().default(""),
+  /** Optional base-URL overrides, for gateways or self-hosted compatible endpoints. */
+  OPENAI_BASE_URL: z.string().optional().default(""),
+  DEEPSEEK_BASE_URL: z.string().optional().default("https://api.deepseek.com"),
+  LLM_MODEL: z.string().default("anthropic:claude-opus-5-5"),
+  LLM_RESEARCH_MODEL: z.string().default("anthropic:claude-opus-5-5"),
   LLM_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(3),
   LLM_WEB_SEARCH: bool.default("true"),
+  /** How many provider batches the tick submits or polls per run. */
+  LLM_BATCH_MAX_PER_TICK: z.coerce.number().int().min(1).max(100).default(5),
+  /** Give up polling a batch after this many attempts (1/min) and mark it failed. */
+  LLM_BATCH_MAX_POLL_ATTEMPTS: z.coerce.number().int().min(10).max(10_000).default(1500),
   /** Fetch the lead website before research (disabled in tests). */
   WEBSITE_FETCH_ENABLED: bool.default("true"),
 
@@ -94,8 +109,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   const c = parsed.data;
   if (c.NODE_ENV === "production") {
-    if (c.LLM_PROVIDER === "anthropic" && !c.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic");
+    // A live deployment needs at least one provider key; which models are usable is then
+    // decided per provider at call time (a dashboard-supplied key also counts, but that
+    // cannot be checked here because the database is not open yet).
+    if (c.LLM_PROVIDER !== "mock" && !c.ANTHROPIC_API_KEY && !c.OPENAI_API_KEY && !c.GEMINI_API_KEY && !c.DEEPSEEK_API_KEY) {
+      throw new Error("At least one model provider API key is required when LLM_PROVIDER is not 'mock'");
     }
     if (c.JWT_SECRET.startsWith("change-me") || c.APP_SECRET.startsWith("change-me")) {
       throw new Error("JWT_SECRET / APP_SECRET must be changed from the example values in production");

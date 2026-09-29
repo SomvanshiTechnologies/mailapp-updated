@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
 import type { OverviewAnalytics, TimeseriesPoint } from "@mailapp/shared";
 import type { AppContext } from "../../context.js";
-import { campaigns, emailEvents, emails, leads, llmCalls } from "../../db/schema.js";
+import { campaigns, emailEvents, emails, leads } from "../../db/schema.js";
 
 export interface RangeOpts {
   from?: Date;
@@ -133,20 +133,4 @@ export async function timeseries(ctx: AppContext, o: RangeOpts): Promise<Timeser
 export async function campaignTimeseries(ctx: AppContext, o: { campaignId: string }): Promise<TimeseriesPoint[]> {
   const [c] = await ctx.db.select({ createdAt: campaigns.createdAt }).from(campaigns).where(eq(campaigns.id, o.campaignId)).limit(1);
   return timeseries(ctx, { campaignId: o.campaignId, from: c?.createdAt, to: new Date() });
-}
-
-export async function llmUsage(ctx: AppContext, o: RangeOpts) {
-  const { from, to } = range(o);
-  const [row] = await ctx.db
-    .select({
-      calls: sql<number>`count(*)::int`,
-      inputTokens: sql<number>`coalesce(sum(${llmCalls.inputTokens}),0)::int`,
-      outputTokens: sql<number>`coalesce(sum(${llmCalls.outputTokens}),0)::int`,
-      cacheReadTokens: sql<number>`coalesce(sum(${llmCalls.cacheReadTokens}),0)::int`,
-      failures: sql<number>`count(*) filter (where ${llmCalls.ok} = false)::int`,
-      avgLatencyMs: sql<number>`coalesce(avg(${llmCalls.durationMs}),0)::int`,
-    })
-    .from(llmCalls)
-    .where(and(gte(llmCalls.createdAt, from), lte(llmCalls.createdAt, to), campaignScope(o, llmCalls)));
-  return row;
 }

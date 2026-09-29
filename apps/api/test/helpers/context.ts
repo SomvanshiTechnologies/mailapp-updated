@@ -13,7 +13,8 @@ import { SettingsService } from "../../src/modules/settings/service.js";
 import { AuthService } from "../../src/modules/auth/service.js";
 import { JwtService } from "../../src/modules/auth/jwt.js";
 import { AuditService } from "../../src/modules/audit/service.js";
-import { MockLlmProvider } from "../../src/modules/llm/mock.js";
+import { ProviderCredentialStore } from "../../src/modules/llm/credentials.js";
+import { createLlmProvider } from "../../src/modules/llm/router.js";
 import { MockSesGateway } from "../../src/modules/ses/mock.js";
 import type { AppContext } from "../../src/context.js";
 import { buildApp } from "../../src/app.js";
@@ -72,9 +73,12 @@ export async function createTestContext(overrides: Partial<Record<string, string
   const settings = new SettingsService(dbHandle.db, config);
   const auth = new AuthService(dbHandle.db, new JwtService(config.JWT_SECRET, config.ACCESS_TOKEN_TTL_MINUTES), config.REFRESH_TOKEN_TTL_DAYS, config.APP_SECRET);
   const audit = new AuditService(dbHandle.db, logger);
-  const llm = new MockLlmProvider({ config, logger, metrics, db: dbHandle.db });
+  const credentials = new ProviderCredentialStore(dbHandle.db, config, logger);
+  // LLM_PROVIDER is "mock" in tests, so the router sends every call to the mock adapter
+  // while still exercising the real resolution, pricing and batch code paths.
+  const llm = createLlmProvider(config, logger, metrics, dbHandle.db, credentials);
   const ses = new MockSesGateway(config);
-  const base: AppContext = { config, db: dbHandle.db, dbHandle, logger, metrics, queue, storage, settings, auth, audit, llm, ses, role: "test" };
+  const base: AppContext = { config, db: dbHandle.db, dbHandle, logger, metrics, queue, storage, settings, auth, audit, llm, credentials, ses, role: "test" };
   const app = await buildApp(base);
   await registerJobHandlers(base);
   const ctx: TestContext = {
@@ -86,9 +90,9 @@ export async function createTestContext(overrides: Partial<Record<string, string
     reset: async () => {
       await dbHandle.pool.query(`
         truncate table
-          llm_calls, email_events, send_attempts, inbound_messages, emails, leads, campaign_access, campaigns, files,
-          suppressions, instruction_docs, services, audit_logs, refresh_tokens, settings, users,
-          ses_snapshots, daily_send_counters, imap_cursors
+          llm_batch_items, llm_batches, llm_calls, email_events, send_attempts, inbound_messages, emails, leads,
+          campaign_access, campaigns, files, suppressions, instruction_docs, services, audit_logs, refresh_tokens,
+          settings, users, ses_snapshots, daily_send_counters, imap_cursors, provider_credentials
         restart identity cascade`);
       settings.invalidate();
       queue.published.length = 0;

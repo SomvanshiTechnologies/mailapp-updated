@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { formatTokens, formatUsd } from "@mailapp/shared";
 import type {
+  LlmUsageDto,
   OverviewAnalytics,
   SesAccountInfo,
   SesMetricsResponse,
@@ -12,17 +14,9 @@ import { api } from "../lib/api";
 import { compactNumber, formatDate, percent } from "../lib/format";
 import { StatTile } from "../components/StatTile";
 import { SesMetricsChart, TimeseriesChart } from "../components/charts";
+import { CostByModelTable, CostTile } from "../components/CostPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { Banner, ErrorBox, KeyValue, PageHeader, Spinner } from "../components/ui";
-
-interface LlmUsage {
-  calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  failures: number;
-  avgLatencyMs: number;
-}
 
 const RANGES = [
   { key: "7", label: "7 days" },
@@ -59,7 +53,7 @@ export function DashboardPage() {
   });
   const llm = useQuery({
     queryKey: ["analytics", "llm", days],
-    queryFn: () => api.get<LlmUsage>("/api/analytics/llm-usage", range),
+    queryFn: () => api.get<LlmUsageDto>("/api/analytics/llm-usage", range),
   });
   const system = useQuery({
     queryKey: ["system", "status"],
@@ -186,20 +180,32 @@ export function DashboardPage() {
         </div>
         <div className="space-y-4">
           <div className="card">
-            <h2 className="mb-2 text-sm font-semibold">LLM usage</h2>
+            <h2 className="mb-2 text-sm font-semibold">Model spend</h2>
             {llm.isLoading ? (
               <Spinner />
             ) : llm.data ? (
-              <KeyValue
-                items={[
-                  ["Calls", compactNumber(llm.data.calls)],
-                  ["Failures", compactNumber(llm.data.failures)],
-                  ["Input tokens", compactNumber(llm.data.inputTokens)],
-                  ["Cache reads", compactNumber(llm.data.cacheReadTokens)],
-                  ["Output tokens", compactNumber(llm.data.outputTokens)],
-                  ["Avg latency", `${Math.round(llm.data.avgLatencyMs)} ms`],
-                ]}
-              />
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <CostTile label={`Total (${days}d)`} value={formatUsd(llm.data.totalMicroUsd)} hint={`${compactNumber(llm.data.calls)} calls`} />
+                  <CostTile label="Per email sent" value={formatUsd(llm.data.microUsdPerSentEmail)} hint="the unit economic" />
+                  <CostTile label="Per lead" value={formatUsd(llm.data.microUsdPerLead)} hint="research + drafts" />
+                </div>
+                <KeyValue
+                  items={[
+                    ["Input tokens", formatTokens(llm.data.inputTokens)],
+                    ["Cache reads", formatTokens(llm.data.cacheReadTokens)],
+                    ["Output tokens", formatTokens(llm.data.outputTokens)],
+                    ["Failures", compactNumber(llm.data.failures)],
+                    ["Avg latency", `${Math.round(llm.data.avgLatencyMs)} ms`],
+                  ]}
+                />
+                <details className="rounded-md border border-gray-200">
+                  <summary className="cursor-pointer px-2 py-1 text-xs font-medium text-gray-600">By model</summary>
+                  <div className="px-2 pb-2">
+                    <CostByModelTable rows={llm.data.byModel} />
+                  </div>
+                </details>
+              </div>
             ) : (
               <ErrorBox message="Unavailable" />
             )}

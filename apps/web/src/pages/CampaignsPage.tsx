@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CAMPAIGN_STATUSES, type CampaignDto } from "@mailapp/shared";
+import { CAMPAIGN_STATUSES, formatUsd, type CampaignDto } from "@mailapp/shared";
 import { api } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { useAuth } from "../hooks/useAuth";
@@ -65,6 +65,8 @@ export function CampaignsPage() {
                 <th className="text-right">Opened</th>
                 <th className="text-right">Replied</th>
                 <th className="text-right">Bounced</th>
+                <th className="text-right">Cost</th>
+                <th className="text-right">Per email</th>
                 <th>Created</th>
                 <th></th>
               </tr>
@@ -93,6 +95,11 @@ export function CampaignsPage() {
                   <td className="text-right tabular-nums">{c.counts.opened}</td>
                   <td className="text-right tabular-nums">{c.counts.replied}</td>
                   <td className="text-right tabular-nums">{c.counts.bounced}</td>
+                  <td className="text-right tabular-nums" title={`${c.ai.researchModelLabel} for research, ${c.ai.draftModelLabel} for drafting`}>
+                    {formatUsd(c.cost.totalMicroUsd)}
+                    {c.ai.usesBatch && <span className="ml-1 text-[10px] text-emerald-700">batch</span>}
+                  </td>
+                  <td className="text-right tabular-nums text-xs text-gray-600">{formatUsd(c.cost.perEmailMicroUsd)}</td>
                   <td className="text-xs text-gray-500">{formatDate(c.createdAt, false)}</td>
                   <td className="whitespace-nowrap text-right">
                     {c.status === "draft" && c.myAccess === "full" ? (

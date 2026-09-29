@@ -18,12 +18,15 @@ delivery event, run follow-ups, and report everything back on a secure dashboard
 | 8 | SES telemetry (bounces, complaints, opens, clicks …) | SES event destination → SNS → signed webhook; plus CloudWatch `AWS/SES` metrics and `GetAccount` quotas pulled into the dashboard |
 | 9 | Observability | pino JSON logs → CloudWatch Logs, custom CloudWatch metrics, request IDs, health probes, audit log, alarms |
 | 10 | Secure login, hosted on AWS | Argon2 passwords, JWT httpOnly cookies, roles, lockout, rate limits; CDK stack for ECS Fargate + RDS + ALB + S3 + SNS |
+| 11 | Know and control what the AI costs | Per-call pricing stored in micro-dollars; cost per email, per lead and per campaign; pre-flight estimate; optional spend cap that blocks a campaign start |
+| 12 | Choose the model per campaign | Catalogue of Claude / OpenAI / Gemini / DeepSeek models with published rates; campaign-level override or inherit from the organisation; batch variants at half price; three research intensities (normal / great / advance) |
 
 ## 2. Stack
 
 - **Language**: TypeScript everywhere (Node 20+ runtime).
 - **API/Worker**: Fastify 5, Drizzle ORM (Postgres), pg-boss (Postgres-backed job queue, no Redis), pino.
-- **LLM**: `@anthropic-ai/sdk`, default model `claude-opus-5`, adaptive thinking, structured outputs (`zodOutputFormat`), prompt caching for the stable prefix (services + instructions), server-side web search/fetch for research.
+- **Models**: multi-provider behind one router — `@anthropic-ai/sdk` (default `anthropic:claude-opus-5-5`), `openai` (also serves DeepSeek via its OpenAI-compatible endpoint), `@google/genai`. Adaptive thinking / reasoning effort, structured outputs, prompt caching for the stable prefix (services + instructions), server-side web search/fetch for research. Every provider's **batch endpoint** is supported at half price via a queue-and-poll layer. Keys resolve from the database first (encrypted, editable in the dashboard) then the environment.
+- **Cost**: every model call is priced at the moment it is made and stored in micro-dollars, rolled up per lead, per email and per campaign, with a pre-flight estimator and an optional per-campaign spend cap.
 - **Email**: `@aws-sdk/client-sesv2`. Events via SNS (`sns-validator` signature check). Inbound replies via SES receipt rule → S3 → SNS, parsed with `mailparser`; optional IMAP poller.
 - **Dashboard**: React 18 + Vite + TanStack Query + React Router + Tailwind + Recharts.
 - **Infra**: AWS CDK v2 (TypeScript). Docker multi-stage image; docker-compose for local.
@@ -45,7 +48,8 @@ mailapp/
     src/modules/instructions  tone/format/rules docs
     src/modules/campaigns     campaign lifecycle + leads
     src/modules/pipeline      research → match → draft → validate
-    src/modules/llm           Anthropic client, prompts, mock provider
+    src/modules/llm           model catalogue + pricing, provider adapters (anthropic/openai/gemini/deepseek/mock),
+                              credential store, prompts, batch queue + runner
     src/modules/ses           sender, rate limiter, event ingestion, inbound, account sync
     src/modules/followups     sequence scheduler
     src/modules/analytics     app metrics + SES/CloudWatch metrics

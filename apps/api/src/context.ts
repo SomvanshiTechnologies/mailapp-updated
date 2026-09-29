@@ -8,6 +8,7 @@ import type { SettingsService } from "./modules/settings/service.js";
 import type { AuthService } from "./modules/auth/service.js";
 import type { AuditService } from "./modules/audit/service.js";
 import type { LlmProvider } from "./modules/llm/provider.js";
+import type { ProviderCredentialStore } from "./modules/llm/credentials.js";
 import type { SesGateway } from "./modules/ses/gateway.js";
 
 /** Everything a route or job handler needs. Built once per process in bootstrap.ts. */
@@ -23,6 +24,8 @@ export interface AppContext {
   auth: AuthService;
   audit: AuditService;
   llm: LlmProvider;
+  /** Where model-provider API keys come from (dashboard first, then environment). */
+  credentials: ProviderCredentialStore;
   ses: SesGateway;
   /** Process role, for status reporting. */
   role: "api" | "worker" | "test";

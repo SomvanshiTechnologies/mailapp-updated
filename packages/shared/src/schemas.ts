@@ -10,6 +10,7 @@ import {
   SUPPRESSION_REASONS,
   USER_ROLES,
 } from "./enums.js";
+import { BATCH_STRATEGIES, CONFIGURABLE_PROVIDERS, RESEARCH_MODES, findModelSpec, parseModelChoice } from "./models.js";
 
 // ---------- Auth ----------
 export const LoginSchema = z.object({
@@ -79,6 +80,69 @@ export const GrantCampaignAccessSchema = z.object({
   level: z.enum(CAMPAIGN_ACCESS_LEVELS),
 });
 export type GrantCampaignAccessInput = z.infer<typeof GrantCampaignAccessSchema>;
+
+// ---------- Model selection / AI configuration ----------
+
+/**
+ * A stored model selection: a catalogue key, optionally "@batch". Validated against the
+ * catalogue so a typo cannot silently send requests to a model that does not exist.
+ */
+export const ModelSelectionSchema = z
+  .string()
+  .min(1)
+  .max(120)
+  .refine((v) => parseModelChoice(v) !== null, { message: "Unknown model" });
+
+/**
+ * Same, but a value that no longer resolves (a model retired since the row was written)
+ * normalises to `fallback` instead of failing. Used where settings are read back from the
+ * database, so a stale model id can never lock an administrator out of the settings page.
+ */
+export const lenientModelSelection = (fallback: string) =>
+  z
+    .string()
+    .max(120)
+    .catch(fallback)
+    .transform((v) => parseModelChoice(v)?.value ?? fallback);
+
+/** Per-1M-token rate override for one model, set by an administrator. */
+export const ModelRateOverrideSchema = z.object({
+  input: z.number().min(0).max(10_000),
+  output: z.number().min(0).max(10_000),
+  cacheRead: z.number().min(0).max(10_000).nullable().optional(),
+  cacheWrite: z.number().min(0).max(10_000).nullable().optional(),
+});
+export type ModelRateOverride = z.infer<typeof ModelRateOverrideSchema>;
+
+/**
+ * Rate overrides keyed by catalogue key ("openai:gpt-6-sol"). Unknown keys are rejected so
+ * the table cannot drift away from the catalogue.
+ */
+export const ModelRateOverridesSchema = z
+  .record(z.string(), ModelRateOverrideSchema)
+  .refine((rec) => Object.keys(rec).every((k) => findModelSpec(k) !== null), { message: "Rate override for an unknown model" });
+
+/**
+ * Which models a campaign uses and how hard research digs. Every field is optional on a
+ * campaign: an absent field inherits the organisation setting.
+ */
+export const CampaignAiConfigSchema = z.object({
+  researchModel: ModelSelectionSchema.optional(),
+  draftModel: ModelSelectionSchema.optional(),
+  researchMode: z.enum(RESEARCH_MODES).optional(),
+  batchStrategy: z.enum(BATCH_STRATEGIES).optional(),
+});
+export type CampaignAiConfig = z.infer<typeof CampaignAiConfigSchema>;
+
+/** Provider credentials supplied from the dashboard. Write-only; never returned. */
+export const ProviderCredentialSchema = z.object({
+  apiKey: z.string().min(8).max(500),
+  /** Override the provider base URL (self-hosted gateways, Azure-style endpoints). */
+  baseUrl: z.string().url().max(500).optional().or(z.literal("")),
+});
+export type ProviderCredentialInput = z.infer<typeof ProviderCredentialSchema>;
+
+export const ProviderParamSchema = z.enum(CONFIGURABLE_PROVIDERS);
 
 // ---------- Hard rules (deterministic validator) ----------
 export const HardRulesSchema = z.object({
@@ -154,6 +218,11 @@ export const CreateCampaignSchema = z.object({
   /** Extra per-campaign guidance appended to the instruction docs. */
   extraGuidance: z.string().max(5000).optional().default(""),
   hardRulesOverride: HardRulesSchema.partial().optional(),
+  /**
+   * Model / research-intensity overrides for this campaign. Omitted or empty fields inherit
+   * the organisation settings, so a campaign only stores what it deliberately changed.
+   */
+  aiConfig: CampaignAiConfigSchema.optional(),
 });
 export type CreateCampaignInput = z.infer<typeof CreateCampaignSchema>;
 
@@ -261,8 +330,25 @@ export const SettingsSchema = z.object({
   dailyCap: z.number().int().min(0).max(1_000_000),
   maxSendRate: z.number().min(0.1).max(1000),
   defaultApprovalMode: z.enum(APPROVAL_MODES),
-  llmModel: z.string().min(1).max(80),
-  researchModel: z.string().min(1).max(80),
+  /** Organisation default drafting model; campaigns inherit this unless they override it. */
+  llmModel: lenientModelSelection("anthropic:claude-opus-5-5"),
+  /** Organisation default research model. */
+  researchModel: lenientModelSelection("anthropic:claude-opus-5-5"),
+  /** How hard research digs by default. */
+  researchMode: z.enum(RESEARCH_MODES).default("great"),
+  /** Grouping used when a selected model is a batch model. */
+  batchStrategy: z.enum(BATCH_STRATEGIES).default("rolling"),
+  /** Rolling batches flush once the oldest queued request is this old. */
+  batchFlushMinutes: z.number().int().min(1).max(720).default(15),
+  /** ...or once this many requests are queued for the same model and purpose. */
+  batchMaxRequests: z.number().int().min(1).max(50_000).default(500),
+  /**
+   * Refuse to start a campaign whose estimated spend exceeds this many US dollars.
+   * 0 disables the check.
+   */
+  campaignCostCapUsd: z.number().min(0).max(1_000_000).default(0),
+  /** Administrator overrides of the catalogue's list prices, keyed by model. */
+  modelRateOverrides: ModelRateOverridesSchema.default({}),
   webSearchEnabled: z.boolean(),
   /**
    * SES can only measure opens when an HTML part is sent. In "personal" delivery mode,
@@ -293,8 +379,14 @@ export const DEFAULT_SETTINGS: Settings = {
   dailyCap: 500,
   maxSendRate: 2,
   defaultApprovalMode: "manual",
-  llmModel: "claude-opus-5",
-  researchModel: "claude-opus-5",
+  llmModel: "anthropic:claude-opus-5-5",
+  researchModel: "anthropic:claude-opus-5-5",
+  researchMode: "great",
+  batchStrategy: "rolling",
+  batchFlushMinutes: 15,
+  batchMaxRequests: 500,
+  campaignCostCapUsd: 0,
+  modelRateOverrides: {},
   webSearchEnabled: true,
   trackOpens: true,
   trackClicks: true,

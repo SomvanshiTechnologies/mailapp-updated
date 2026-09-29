@@ -7,6 +7,7 @@ import { runSendJob } from "../modules/ses/sender.js";
 import { runFollowupTick } from "../modules/followups/scheduler.js";
 import { runSesSync } from "../modules/ses/sync.js";
 import { runImapPoll } from "../modules/ses/imap.js";
+import { runBatchTick } from "../modules/llm/batch/runner.js";
 
 /** Wrap a handler with logging + failure metrics. */
 function wrap<T extends object>(ctx: AppContext, name: string, fn: (data: T) => Promise<unknown>) {
@@ -33,6 +34,9 @@ export async function registerJobHandlers(ctx: AppContext): Promise<void> {
   await ctx.queue.work<TickJob>(JOB_QUEUES.sesSync, { concurrency: 1, pollingIntervalSeconds: 10 }, wrap(ctx, JOB_QUEUES.sesSync, () => runSesSync(ctx)));
   await ctx.queue.work<TickJob>(JOB_QUEUES.metricsFlush, { concurrency: 1, pollingIntervalSeconds: 10 }, wrap(ctx, JOB_QUEUES.metricsFlush, () => ctx.metrics.flush()));
   await ctx.queue.work<TickJob>(JOB_QUEUES.imapPoll, { concurrency: 1, pollingIntervalSeconds: 10 }, wrap(ctx, JOB_QUEUES.imapPoll, () => runImapPoll(ctx)));
+  // Single worker: the tick flushes and polls batches, and two of them would race on the
+  // same pending groups.
+  await ctx.queue.work<TickJob>(JOB_QUEUES.llmBatchTick, { concurrency: 1, pollingIntervalSeconds: 5 }, wrap(ctx, JOB_QUEUES.llmBatchTick, () => runBatchTick(ctx)));
 }
 
 export async function registerSchedules(ctx: AppContext): Promise<void> {
@@ -41,6 +45,7 @@ export async function registerSchedules(ctx: AppContext): Promise<void> {
   await ctx.queue.schedule(JOB_QUEUES.metricsFlush, "* * * * *");
   // Always scheduled: the poll enumerates the organisation mailbox (env) and users' own mailboxes.
   await ctx.queue.schedule(JOB_QUEUES.imapPoll, "*/2 * * * *");
+  await ctx.queue.schedule(JOB_QUEUES.llmBatchTick, "* * * * *");
   // Kick an initial sync so the dashboard has data right after boot.
   await ctx.queue.publish(JOB_QUEUES.sesSync, {}, { singletonKey: "ses.sync:boot", retryLimit: 0 });
 }

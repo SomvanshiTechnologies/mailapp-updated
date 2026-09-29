@@ -23,6 +23,7 @@ import { leadsRoutes } from "./modules/campaigns/lead-routes.js";
 import { emailsRoutes } from "./modules/emails/routes.js";
 import { suppressionsRoutes } from "./modules/suppressions/routes.js";
 import { analyticsRoutes } from "./modules/analytics/routes.js";
+import { llmRoutes } from "./modules/llm/routes.js";
 import { systemRoutes } from "./modules/system/routes.js";
 import { webhookRoutes } from "./modules/ses/webhook-routes.js";
 import { unsubscribeRoutes } from "./modules/unsubscribe/routes.js";
@@ -145,6 +146,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   await emailsRoutes(app, ctx);
   await suppressionsRoutes(app, ctx);
   await analyticsRoutes(app, ctx);
+  await llmRoutes(app, ctx);
   await systemRoutes(app, ctx);
   await webhookRoutes(app, ctx);
   await unsubscribeRoutes(app, ctx);

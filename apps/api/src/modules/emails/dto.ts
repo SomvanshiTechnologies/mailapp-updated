@@ -20,6 +20,7 @@ export function toEmailDto(e: EmailRow): EmailDto {
     messageIdHeader: e.messageIdHeader,
     inReplyTo: e.inReplyTo,
     llmMeta: e.llmMeta ?? null,
+    costMicroUsd: e.costMicroUsd,
     validation: e.validation ?? null,
     reviewedBy: e.reviewedBy,
     reviewedAt: iso(e.reviewedAt),

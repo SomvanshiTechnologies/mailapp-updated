@@ -11,6 +11,10 @@ import {
   type ImportSummary,
   type LeadDto,
   type LeadStatus,
+  type CostSummary,
+  type ResolvedAiConfig,
+  formatUsd,
+  microToUsd,
 } from "@mailapp/shared";
 import type { AppContext } from "../../context.js";
 import { campaigns, emails, files, leads, suppressions, users, type CampaignRow, type LeadRow } from "../../db/schema.js";
@@ -19,6 +23,7 @@ import { makeUnsubscribeToken } from "../../lib/crypto.js";
 import { nextSendWindow } from "../../lib/time.js";
 import { buildLeadImport, parseSheet, type ParsedSheet } from "../excel/import.js";
 import type { ResearchJob, DraftJob, SendJob } from "../../jobs/types.js";
+import { campaignCostDto } from "../analytics/cost.js";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
@@ -66,6 +71,8 @@ export function toLeadDto(l: LeadRow, nextSendAt: string | null = null): LeadDto
     persona: l.persona ?? null,
     matchedServices: l.matchedServices ?? null,
     lastError: l.lastError,
+    researchMicroUsd: l.researchCostMicroUsd,
+    totalMicroUsd: l.totalCostMicroUsd,
     sentAt: iso(l.sentAt),
     deliveredAt: iso(l.deliveredAt),
     openedAt: iso(l.openedAt),
@@ -82,6 +89,10 @@ export function toLeadDto(l: LeadRow, nextSendAt: string | null = null): LeadDto
 export interface CampaignDtoExtras {
   createdByName: string | null;
   myAccess: CampaignAccessLevel;
+  /** Effective AI configuration after campaign-over-organisation inheritance. */
+  ai: ResolvedAiConfig;
+  /** Spend to date. */
+  cost: CostSummary;
 }
 
 /** Display names of campaign owners, keyed by user id. */
@@ -106,6 +117,9 @@ export function toCampaignDto(c: CampaignRow, counts: CampaignCounts, extras: Ca
     replyTo: c.replyTo,
     extraGuidance: c.extraGuidance,
     hardRulesOverride: c.hardRulesOverride ?? null,
+    aiConfig: c.aiConfig ?? null,
+    ai: extras.ai,
+    cost: extras.cost,
     sourceFileName: c.sourceFileName,
     headerMap: c.headerMap ?? null,
     importSummary: c.importSummary ?? null,
@@ -245,6 +259,7 @@ export async function createCampaignFromSheet(ctx: AppContext, args: CreateCampa
         replyTo: args.input.replyTo ?? null,
         extraGuidance: args.input.extraGuidance ?? "",
         hardRulesOverride: args.input.hardRulesOverride ?? null,
+        aiConfig: args.input.aiConfig && Object.keys(args.input.aiConfig).length ? args.input.aiConfig : null,
         sourceFileId: fileRow.id,
         sourceFileName: args.file.filename,
         headerMap: imp.headerMap,
@@ -332,6 +347,7 @@ export async function enqueuePendingWork(ctx: AppContext, campaignId: string): P
 export async function startCampaign(ctx: AppContext, id: string): Promise<{ campaign: CampaignRow; enqueued: number }> {
   const c = await getCampaignOrThrow(ctx, id);
   if (c.status !== "draft" && c.status !== "paused") throw AppError.conflict(`Campaign is ${c.status}`);
+  await assertWithinCostCap(ctx, id);
   const [campaign] = await ctx.db
     .update(campaigns)
     .set({ status: "active", startedAt: c.startedAt ?? new Date(), updatedAt: new Date() })
@@ -398,3 +414,21 @@ export async function previewSheet(sheet: ParsedSheet) {
 }
 
 export { parseSheet };
+
+/**
+ * Refuse to start a campaign whose projected model spend exceeds the organisation's cap.
+ * A cap of 0 disables the check. The projection is the same one the UI shows, so an operator
+ * is never surprised by the refusal.
+ */
+export async function assertWithinCostCap(ctx: AppContext, campaignId: string): Promise<void> {
+  const settings = await ctx.settings.get();
+  if (!settings.campaignCostCapUsd) return;
+  const { estimate, actual } = await campaignCostDto(ctx, campaignId);
+  const projectedUsd = microToUsd(actual.totalMicroUsd + estimate.totalMicroUsd);
+  if (projectedUsd <= settings.campaignCostCapUsd) return;
+  throw AppError.conflict(
+    `Estimated spend for this campaign is ${formatUsd(actual.totalMicroUsd + estimate.totalMicroUsd)}, above the ${formatUsd(
+      settings.campaignCostCapUsd * 1_000_000,
+    )} cap. Lower the research intensity, pick a cheaper or batch model, or raise the cap in Settings.`,
+  );
+}

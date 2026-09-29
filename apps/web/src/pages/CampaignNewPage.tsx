@@ -15,6 +15,10 @@ import { HeaderMappingPreview, type PreviewResult } from "../components/HeaderMa
 import { SequenceEditor, validateSequence } from "../components/SequenceEditor";
 import { ChipsInput } from "../components/ChipsInput";
 import { ErrorBox, Field, PageHeader, Spinner } from "../components/ui";
+import { AiConfigEditor, EMPTY_AI_FORM, aiConfigFromForm, type AiConfigForm } from "../components/AiConfigEditor";
+import { useModelCatalogue } from "../components/ModelSelect";
+import { formatUsd, type SettingsDto } from "@mailapp/shared";
+import { useCostEstimate } from "../components/AiConfigEditor";
 
 type Step = 1 | 2 | 3;
 
@@ -35,12 +39,32 @@ export function CampaignNewPage() {
   const [extraGuidance, setExtraGuidance] = useState("");
   const [maxWords, setMaxWords] = useState<string>("");
   const [bannedPhrases, setBannedPhrases] = useState<string[]>([]);
+  const [ai, setAi] = useState<AiConfigForm>(EMPTY_AI_FORM);
   const [formError, setFormError] = useState<string | null>(null);
 
   const services = useQuery({
     queryKey: ["services"],
     queryFn: () => api.get<{ items: ServiceDto[] }>("/api/services"),
   });
+  const catalogue = useModelCatalogue();
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ settings: SettingsDto }>("/api/settings") });
+
+  // The estimate is driven by the parsed sheet, so it updates as soon as the file is read.
+  const leadCount = preview?.totalRows ?? 0;
+  const estimate = useCostEstimate({ leads: leadCount, steps: sequence.length, form: ai });
+
+  /** Organisation defaults, for the "inherit — <default>" labels in the pickers. */
+  const orgDefaults = (() => {
+    const sd = settings.data?.settings;
+    if (!sd || !catalogue.data) return null;
+    const label = (value: string) => catalogue.data!.models.find((m) => m.value === value)?.label ?? value;
+    return {
+      researchModelLabel: label(sd.researchModel),
+      draftModelLabel: label(sd.llmModel),
+      researchMode: sd.researchMode,
+      batchStrategy: sd.batchStrategy,
+    };
+  })();
 
   const previewMut = useMutation({
     mutationFn: (f: File) => {
@@ -81,6 +105,7 @@ export function CampaignNewPage() {
       replyTo: replyTo || undefined,
       extraGuidance,
       hardRulesOverride: Object.keys(hardRulesOverride).length ? hardRulesOverride : undefined,
+      aiConfig: aiConfigFromForm(ai),
     };
     const parsed = CreateCampaignSchema.safeParse(raw);
     if (!parsed.success) {
@@ -185,6 +210,22 @@ export function CampaignNewPage() {
           </div>
 
           <div className="card space-y-4">
+            <h2 className="text-sm font-semibold">AI models &amp; cost</h2>
+            <p className="text-xs text-gray-500">
+              Leave a field on "inherit" to follow the organisation setting, so a later change there applies to this
+              campaign too. Override it to pin this campaign to a specific model or research depth.
+            </p>
+            <AiConfigEditor
+              value={ai}
+              onChange={setAi}
+              orgDefaults={orgDefaults}
+              leads={leadCount}
+              steps={sequence.length}
+              catalogue={catalogue.data}
+            />
+          </div>
+
+          <div className="card space-y-4">
             <h2 className="text-sm font-semibold">Sender & guidance (optional)</h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <Field label="From email" hint="Defaults to global settings">
@@ -242,6 +283,26 @@ export function CampaignNewPage() {
             <div>
               <span className="text-gray-500">Services:</span> {serviceIds.length ? `${serviceIds.length} selected` : "all active"}
             </div>
+            {estimate.data && (
+              <>
+                <div>
+                  <span className="text-gray-500">Models:</span> {estimate.data.ai.researchModelLabel}
+                  {estimate.data.ai.researchBatch && " (batch)"} for research, {estimate.data.ai.draftModelLabel}
+                  {estimate.data.ai.draftBatch && " (batch)"} for drafting · {estimate.data.ai.researchMode} depth
+                </div>
+                <div>
+                  <span className="text-gray-500">Estimated cost:</span>{" "}
+                  <strong className="tabular-nums">{formatUsd(estimate.data.estimate.totalMicroUsd)}</strong> —{" "}
+                  {formatUsd(estimate.data.estimate.perLeadMicroUsd)} per lead, {formatUsd(estimate.data.estimate.perEmailMicroUsd)} per email
+                </div>
+                {estimate.data.ai.usesBatch && (
+                  <div className="text-xs text-amber-700">
+                    A batch model is selected: drafts will appear once the provider returns the batch, which can take up to 24
+                    hours, rather than within minutes.
+                  </div>
+                )}
+              </>
+            )}
           </div>
           <div className="flex justify-between">
             <button className="btn-secondary" onClick={() => setStep(2)} disabled={create.isPending}>

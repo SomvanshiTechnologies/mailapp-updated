@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { EmailDto, LeadDto, Paginated, ValidationResult } from "@mailapp/shared";
+import { formatUsd, type EmailDto, type LeadDto, type Paginated, type ValidationResult } from "@mailapp/shared";
 import { api } from "../lib/api";
 import { fullName } from "../lib/format";
 import { useAuth } from "../hooks/useAuth";
@@ -77,8 +77,16 @@ function ReviewCard({ item, onChanged }: { item: ReviewItem; onChanged: () => vo
             {lead.company ?? "—"}
           </div>
           <div className="text-xs text-gray-500">{lead.email}</div>
-          <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
             Step {item.step} <StatusBadge status={item.status} />
+            {item.costMicroUsd > 0 && (
+              <span className="tabular-nums" title="What drafting this email cost, including any validator retry">
+                {formatUsd(item.costMicroUsd)}
+              </span>
+            )}
+            {typeof item.llmMeta?.batch === "boolean" && item.llmMeta.batch && (
+              <span className="rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-medium text-emerald-800">batch</span>
+            )}
           </div>
         </div>
         {persona && (

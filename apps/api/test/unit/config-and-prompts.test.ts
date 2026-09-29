@@ -25,10 +25,19 @@ describe("config", () => {
   });
 
   it("enforces production guards", () => {
-    expect(() => loadConfig({ ...baseEnv, NODE_ENV: "production", LLM_PROVIDER: "anthropic" })).toThrow(/ANTHROPIC_API_KEY/);
+    // A live deployment needs at least one provider key, but any one of them will do.
+    expect(() => loadConfig({ ...baseEnv, NODE_ENV: "production", LLM_PROVIDER: "live" })).toThrow(/provider API key/);
+    expect(() => loadConfig({ ...baseEnv, NODE_ENV: "production", LLM_PROVIDER: "live", OPENAI_API_KEY: "sk-test" })).not.toThrow();
+    expect(() => loadConfig({ ...baseEnv, NODE_ENV: "production", LLM_PROVIDER: "live", GEMINI_API_KEY: "g-test" })).not.toThrow();
     const c = loadConfig({ ...baseEnv, NODE_ENV: "production", SNS_VERIFY_SIGNATURES: "false", SNS_ALLOWED_TOPIC_ARNS: "a, b" });
     expect(c.SNS_VERIFY_SIGNATURES).toBe(true);
     expect(c.snsAllowedTopicArns).toEqual(["a", "b"]);
+  });
+
+  it("defaults the model selections to catalogue keys", () => {
+    const c = loadConfig(baseEnv);
+    expect(c.LLM_MODEL).toBe("anthropic:claude-opus-5-5");
+    expect(c.LLM_RESEARCH_MODEL).toBe("anthropic:claude-opus-5-5");
   });
 });
 

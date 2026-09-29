@@ -12,7 +12,18 @@ import type {
   UserRole,
 } from "./enums.js";
 import type { Persona } from "./llm-schemas.js";
-import type { HardRules, Sequence, Settings } from "./schemas.js";
+import type { CampaignAiConfig, HardRules, Sequence, Settings } from "./schemas.js";
+import type {
+  BatchItemStatus,
+  BatchStatus,
+  BatchStrategy,
+  ConfigurableProvider,
+  LlmProviderName,
+  LlmPurpose,
+  ModelRates,
+  ResearchMode,
+} from "./models.js";
+import type { CostEstimate } from "./cost.js";
 
 export interface UserDto {
   id: string;
@@ -111,6 +122,137 @@ export interface CampaignCounts {
   other: number;
 }
 
+/** Money and tokens already spent on a campaign, plus the derived per-unit figures. */
+export interface CostSummary {
+  /** Integer micro-dollars (1e-6 USD); use formatUsd() to display. */
+  totalMicroUsd: number;
+  researchMicroUsd: number;
+  draftMicroUsd: number;
+  perLeadMicroUsd: number;
+  perEmailMicroUsd: number;
+  calls: number;
+  failedCalls: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  /** Leads and emails the per-unit figures were divided by. */
+  leads: number;
+  emails: number;
+  /** Share of spend that went through a batch endpoint, 0-100. */
+  batchSharePct: number;
+}
+
+/** Spend grouped by the model that produced it, for the cost breakdown table. */
+export interface CostByModel {
+  modelKey: string;
+  provider: LlmProviderName;
+  label: string;
+  batch: boolean;
+  purpose: LlmPurpose | "all";
+  calls: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  microUsd: number;
+}
+
+/** The models a campaign will actually use, after inheritance is applied. */
+export interface ResolvedAiConfig {
+  researchModel: string;
+  researchModelLabel: string;
+  researchBatch: boolean;
+  draftModel: string;
+  draftModelLabel: string;
+  draftBatch: boolean;
+  researchMode: ResearchMode;
+  batchStrategy: BatchStrategy;
+  /** Which of the above came from the campaign rather than the organisation settings. */
+  overridden: Array<keyof CampaignAiConfig>;
+  /** True when either model routes through a batch endpoint. */
+  usesBatch: boolean;
+}
+
+export interface CampaignCostDto {
+  actual: CostSummary;
+  estimate: CostEstimate;
+  byModel: CostByModel[];
+  ai: ResolvedAiConfig;
+  /** Open batches for this campaign, so the UI can explain why drafts have not appeared. */
+  batches: BatchDto[];
+}
+
+export interface BatchDto {
+  id: string;
+  provider: LlmProviderName;
+  model: string;
+  purpose: LlmPurpose;
+  campaignId: string | null;
+  campaignName: string | null;
+  externalId: string | null;
+  status: BatchStatus;
+  strategy: BatchStrategy;
+  requestCount: number;
+  succeeded: number;
+  errored: number;
+  microUsd: number;
+  createdAt: string;
+  submittedAt: string | null;
+  completedAt: string | null;
+  lastPolledAt: string | null;
+  error: string | null;
+}
+
+export interface BatchItemDto {
+  id: string;
+  customId: string;
+  leadId: string | null;
+  step: number | null;
+  attempt: number;
+  status: BatchItemStatus;
+  microUsd: number;
+  error: string | null;
+}
+
+/** One provider's configuration state, for the Settings "API keys" card. */
+export interface ProviderStatusDto {
+  provider: ConfigurableProvider;
+  label: string;
+  /** A usable key exists (from either source). */
+  configured: boolean;
+  source: "database" | "environment" | "none";
+  baseUrl: string | null;
+  envVar: string;
+  keysUrl: string;
+  /** Last four characters of the stored key, for recognition. Null when it came from env. */
+  keyHint: string | null;
+  updatedAt: string | null;
+  /** Models in the catalogue that need this provider. */
+  modelCount: number;
+  /** Result of the last connectivity test run from the dashboard. */
+  lastTest: { ok: boolean; at: string; message: string | null } | null;
+}
+
+/** One catalogue entry as the picker needs it, with rates after any admin override. */
+export interface ModelOptionDto {
+  value: string;
+  modelKey: string;
+  provider: LlmProviderName;
+  providerLabel: string;
+  model: string;
+  label: string;
+  note: string;
+  batch: boolean;
+  available: boolean;
+  tier: "flagship" | "balanced" | "fast";
+  webSearch: boolean;
+  effort: boolean;
+  contextWindow: number;
+  rates: ModelRates;
+  rateOverridden: boolean;
+  /** Indicative cost of researching one lead and drafting one email with this model. */
+  indicative: { researchMicroUsd: number; draftMicroUsd: number };
+}
+
 export interface CampaignDto {
   id: string;
   name: string;
@@ -124,6 +266,12 @@ export interface CampaignDto {
   replyTo: string | null;
   extraGuidance: string;
   hardRulesOverride: Partial<HardRules> | null;
+  /** Only the fields this campaign deliberately overrides; null when it inherits everything. */
+  aiConfig: CampaignAiConfig | null;
+  /** The effective configuration after inheritance. */
+  ai: ResolvedAiConfig;
+  /** Spend to date on this campaign. */
+  cost: CostSummary;
   sourceFileName: string | null;
   headerMap: Record<string, string> | null;
   importSummary: ImportSummary | null;
@@ -180,6 +328,10 @@ export interface LeadDto {
   persona: Persona | null;
   matchedServices: MatchedService[] | null;
   lastError: string | null;
+  /** Micro-dollars spent researching this lead. */
+  researchMicroUsd: number;
+  /** Micro-dollars spent on this lead in total (research plus every draft). */
+  totalMicroUsd: number;
   sentAt: string | null;
   deliveredAt: string | null;
   openedAt: string | null;
@@ -208,6 +360,8 @@ export interface EmailDto {
   messageIdHeader: string | null;
   inReplyTo: string | null;
   llmMeta: Record<string, unknown> | null;
+  /** Micro-dollars the draft of this email cost, including a validator retry. */
+  costMicroUsd: number;
   validation: ValidationResult | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
@@ -403,4 +557,24 @@ export interface SystemStatus {
 
 export interface SettingsDto extends Settings {
   updatedAt: string | null;
+}
+
+/** Organisation-wide LLM usage and spend for the dashboard. */
+export interface LlmUsageDto {
+  range: { from: string; to: string };
+  calls: number;
+  failures: number;
+  avgLatencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalMicroUsd: number;
+  /** Cost per email actually sent in the range — the number that matters commercially. */
+  microUsdPerSentEmail: number;
+  microUsdPerLead: number;
+  byModel: CostByModel[];
+  byPurpose: Array<{ purpose: LlmPurpose; calls: number; microUsd: number }>;
+  /** Daily spend, for the cost chart. */
+  daily: Array<{ date: string; microUsd: number; calls: number }>;
 }

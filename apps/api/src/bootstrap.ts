@@ -8,7 +8,8 @@ import { SettingsService } from "./modules/settings/service.js";
 import { AuthService } from "./modules/auth/service.js";
 import { JwtService } from "./modules/auth/jwt.js";
 import { AuditService } from "./modules/audit/service.js";
-import { createLlmProvider } from "./modules/llm/provider.js";
+import { ProviderCredentialStore } from "./modules/llm/credentials.js";
+import { createLlmProvider } from "./modules/llm/router.js";
 import { createSesGateway } from "./modules/ses/gateway.js";
 import type { AppContext } from "./context.js";
 
@@ -45,7 +46,8 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext & { 
     config.APP_SECRET,
   );
   const audit = new AuditService(dbHandle.db, logger.child({ component: "audit" }));
-  const llm = createLlmProvider(config, logger.child({ component: "llm" }), metrics, dbHandle.db);
+  const credentials = new ProviderCredentialStore(dbHandle.db, config, logger.child({ component: "llm" }));
+  const llm = createLlmProvider(config, logger.child({ component: "llm" }), metrics, dbHandle.db, credentials);
   const ses = createSesGateway(config, logger.child({ component: "ses" }));
 
   const ctx: AppContext = {
@@ -60,6 +62,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<AppContext & { 
     auth,
     audit,
     llm,
+    credentials,
     ses,
     role: opts.role,
   };

@@ -7,7 +7,8 @@ import { emailEvents, sesSnapshots } from "../../db/schema.js";
 import { parse } from "../../lib/validate.js";
 import { principalOf, requireCampaignAccess, visibleCampaignIds } from "../auth/access.js";
 import { toEventDto } from "../emails/dto.js";
-import { llmUsage, overview, timeseries, type RangeOpts } from "./service.js";
+import { overview, timeseries, type RangeOpts } from "./service.js";
+import { llmUsageDto } from "./cost.js";
 
 export async function analyticsRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   /**
@@ -26,7 +27,12 @@ export async function analyticsRoutes(app: FastifyInstance, ctx: AppContext): Pr
 
   app.get("/api/analytics/timeseries", { preHandler: app.authenticate }, async (req) => ({ points: await timeseries(ctx, await scoped(req)) }));
 
-  app.get("/api/analytics/llm-usage", { preHandler: app.authenticate }, async (req) => llmUsage(ctx, await scoped(req)));
+  app.get("/api/analytics/llm-usage", { preHandler: app.authenticate }, async (req) => {
+    const o = await scoped(req);
+    const to = o.to ?? new Date();
+    const from = o.from ?? new Date(to.getTime() - 30 * 86_400_000);
+    return llmUsageDto(ctx, { from, to, campaignId: o.campaignId, campaignIds: o.campaignIds });
+  });
 
   app.get("/api/analytics/events", { preHandler: app.authenticate }, async (req) => {
     const q = parse(

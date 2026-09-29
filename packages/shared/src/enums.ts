@@ -135,6 +135,8 @@ export const JOB_QUEUES = {
   metricsFlush: "metrics.flush",
   imapPoll: "imap.poll",
   export: "campaign.export",
+  /** Flushes queued batch requests and polls open provider batches. */
+  llmBatchTick: "llm.batch.tick",
 } as const;
 export type JobQueue = (typeof JOB_QUEUES)[keyof typeof JOB_QUEUES];
 

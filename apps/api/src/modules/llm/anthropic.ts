@@ -2,35 +2,28 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { AutoParseableOutputFormat } from "@anthropic-ai/sdk/lib/parser";
 import type { ZodType } from "zod/v4";
-import { DraftOutputSchema, PersonaSchema, type DraftOutput, type Persona } from "@mailapp/shared";
-import { llmCalls } from "../../db/schema.js";
+import { DraftOutputSchema, PersonaSchema, ZERO_USAGE, addUsage, type DraftOutput, type Persona } from "@mailapp/shared";
 import { AppError } from "../../lib/errors.js";
-import type { DraftInput, LlmDeps, LlmProvider, LlmResult, LlmUsage, ResearchInput } from "./provider.js";
+import type { ResolvedModel } from "./catalogue.js";
 import {
-  PERSONA_STRUCTURE_SYSTEM,
-  RESEARCH_SYSTEM,
-  draftSystemBlocks,
-  draftUserMessage,
-  researchUserMessage,
-} from "./prompts.js";
+  ConcurrencyGate,
+  type DraftInput,
+  type LlmAdapter,
+  type LlmDeps,
+  type LlmResult,
+  type LlmUsage,
+  type PreparedRequest,
+  type ResearchInput,
+} from "./provider.js";
+import { PERSONA_STRUCTURE_SYSTEM, draftSystemBlocks, draftUserMessage, researchSystem, researchUserMessage } from "./prompts.js";
+import { recordLlmCall } from "./usage.js";
 
-const MAX_RESEARCH_ITERATIONS = 6;
-
-function usageOf(msg: Anthropic.Message): LlmUsage {
+function usageOf(msg: { usage: Anthropic.Usage }): LlmUsage {
   return {
     inputTokens: msg.usage.input_tokens ?? 0,
     outputTokens: msg.usage.output_tokens ?? 0,
     cacheReadTokens: msg.usage.cache_read_input_tokens ?? 0,
     cacheWriteTokens: msg.usage.cache_creation_input_tokens ?? 0,
-  };
-}
-
-function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
-  return {
-    inputTokens: a.inputTokens + b.inputTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
-    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
-    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
   };
 }
 
@@ -46,100 +39,135 @@ function textOf(msg: Anthropic.Message): string {
     .join("\n");
 }
 
-/**
- * Claude-backed provider.
- * Research runs as an agentic loop with server-side web search/fetch, then the findings are
- * converted into a strict Persona JSON with structured outputs. Drafting is a single structured
- * call whose stable prefix (company profile, catalogue, tone/format/rules) is prompt-cached.
- */
-export class AnthropicProvider implements LlmProvider {
-  readonly name = "anthropic" as const;
-  private readonly client: Anthropic;
-  private inflight = 0;
-  private waiters: Array<() => void> = [];
+/** Server-side research tools, budgeted by the research mode. */
+function researchTools(input: ResearchInput): Anthropic.ToolUnion[] | undefined {
+  if (!input.webSearch || !input.model.supportsWebSearch || input.profile.maxSearches === 0) return undefined;
+  const tools: Anthropic.ToolUnion[] = [{ type: "web_search_20260209", name: "web_search", max_uses: input.profile.maxSearches }];
+  if (input.profile.maxFetches > 0) {
+    tools.push({ type: "web_fetch_20260209", name: "web_fetch", max_uses: input.profile.maxFetches });
+  }
+  return tools;
+}
 
-  constructor(private readonly deps: LlmDeps) {
-    this.client = new Anthropic({ apiKey: deps.config.ANTHROPIC_API_KEY || undefined, maxRetries: 3, timeout: 10 * 60_000 });
+/**
+ * Claude-backed adapter.
+ * Research runs as an agentic loop with server-side web search/fetch, then the findings are
+ * converted into a strict Persona JSON with structured outputs. Drafting is a single
+ * structured call whose stable prefix (company profile, catalogue, tone/format/rules) is
+ * prompt-cached, so every lead after the first in a campaign reads it at cache rates.
+ */
+export class AnthropicAdapter implements LlmAdapter {
+  readonly provider = "anthropic" as const;
+  private readonly gate: ConcurrencyGate;
+
+  constructor(
+    private readonly deps: LlmDeps,
+    private readonly client: Anthropic,
+  ) {
+    this.gate = new ConcurrencyGate(deps.config.LLM_MAX_CONCURRENCY);
   }
 
-  private async acquire(): Promise<() => void> {
-    if (this.inflight >= this.deps.config.LLM_MAX_CONCURRENCY) {
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
-    }
-    this.inflight++;
-    return () => {
-      this.inflight--;
-      const next = this.waiters.shift();
-      if (next) next();
+  static create(deps: LlmDeps, apiKey: string, baseUrl: string | null): AnthropicAdapter {
+    return new AnthropicAdapter(
+      deps,
+      new Anthropic({ apiKey: apiKey || undefined, baseURL: baseUrl ?? undefined, maxRetries: 3, timeout: 10 * 60_000 }),
+    );
+  }
+
+  async ping(): Promise<void> {
+    await this.client.models.list({ limit: 1 });
+  }
+
+  /** The batch layer needs the configured client to create and poll message batches. */
+  get raw(): Anthropic {
+    return this.client;
+  }
+
+  // ----- request bodies, shared by the sync and batch paths -----
+
+  /** The findings pass. Batch submissions use this too, minus the agentic loop. */
+  researchBody(input: ResearchInput): Record<string, unknown> {
+    return {
+      model: input.model.model,
+      max_tokens: Math.min(input.profile.maxOutputTokens, input.model.maxOutput),
+      system: researchSystem(input.researchMode),
+      thinking: { type: "adaptive" as const },
+      ...(input.model.supportsEffort ? { output_config: { effort: input.profile.effort } } : {}),
+      ...(researchTools(input) ? { tools: researchTools(input) } : {}),
+      messages: [{ role: "user" as const, content: researchUserMessage(input) }],
     };
   }
 
-  private async record(
-    purpose: "research" | "draft",
-    model: string,
-    usage: LlmUsage,
-    durationMs: number,
-    stopReason: string | null,
-    ok: boolean,
-    error: string | null,
-    ids: { leadId?: string; campaignId?: string },
-  ): Promise<void> {
-    this.deps.metrics.emit("llm_calls", 1, { purpose });
-    this.deps.metrics.timing("llm_latency_ms", durationMs, { purpose });
-    this.deps.metrics.emit("llm_input_tokens", usage.inputTokens + usage.cacheReadTokens, { purpose });
-    this.deps.metrics.emit("llm_output_tokens", usage.outputTokens, { purpose });
-    if (!ok) this.deps.metrics.emit("llm_failures", 1, { purpose });
-    try {
-      await this.deps.db.insert(llmCalls).values({
-        leadId: ids.leadId,
-        campaignId: ids.campaignId,
-        purpose,
-        model,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cacheReadTokens: usage.cacheReadTokens,
-        cacheWriteTokens: usage.cacheWriteTokens,
-        durationMs,
-        stopReason,
-        ok,
-        error,
-      });
-    } catch (err) {
-      this.deps.logger.warn({ err }, "failed to record llm call");
-    }
+  personaBody(model: ResolvedModel, findings: string, label: string): Record<string, unknown> {
+    return {
+      model: model.model,
+      max_tokens: Math.min(8000, model.maxOutput),
+      system: PERSONA_STRUCTURE_SYSTEM,
+      ...(model.supportsEffort ? { output_config: { effort: "low" as const } } : {}),
+      messages: [
+        {
+          role: "user" as const,
+          content: `Research findings for ${label}:\n\n${findings}\n\nConvert these findings into the persona JSON.`,
+        },
+      ],
+    };
   }
 
+  draftBody(input: DraftInput): Record<string, unknown> {
+    const blocks = draftSystemBlocks(input.instructions, input.services, input.hardRules);
+    const system: Anthropic.TextBlockParam[] = blocks.map((text, i) => ({
+      type: "text",
+      text,
+      // Cache the whole stable prefix; it is identical for every lead in a campaign.
+      ...(i === blocks.length - 1 ? { cache_control: { type: "ephemeral" as const } } : {}),
+    }));
+    return {
+      model: input.model.model,
+      max_tokens: Math.min(8000, input.model.maxOutput),
+      system,
+      thinking: { type: "adaptive" as const },
+      messages: [{ role: "user" as const, content: draftUserMessage(input) }],
+    };
+  }
+
+  prepareResearch(input: ResearchInput): PreparedRequest {
+    // Batch requests cannot run a multi-turn tool loop, so the batched research pass asks for
+    // the persona JSON directly and the findings come back as the model's own summary.
+    const body = this.researchBody(input);
+    return {
+      purpose: "research",
+      model: input.model,
+      body: { ...body, output_config: { ...((body.output_config as object) ?? {}), format: outputFormat(PersonaSchema) } },
+    };
+  }
+
+  prepareDraft(input: DraftInput): PreparedRequest {
+    const body = this.draftBody(input);
+    return {
+      purpose: "draft",
+      model: input.model,
+      body: { ...body, output_config: { format: outputFormat(DraftOutputSchema) } },
+    };
+  }
+
+  // ----- synchronous calls -----
+
   async research(input: ResearchInput): Promise<LlmResult<Persona>> {
-    const release = await this.acquire();
+    const release = await this.gate.acquire();
     const started = Date.now();
-    let usage: LlmUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    let usage: LlmUsage = ZERO_USAGE;
     const ids = { leadId: input.lead.id, campaignId: input.lead.campaignId };
     try {
       // Phase 1: agentic research with server-side tools.
-      const tools: Anthropic.ToolUnion[] = input.webSearch
-        ? [
-            { type: "web_search_20260209", name: "web_search", max_uses: 6 },
-            { type: "web_fetch_20260209", name: "web_fetch", max_uses: 4 },
-          ]
-        : [];
-      const messages: Anthropic.MessageParam[] = [{ role: "user", content: researchUserMessage(input) }];
+      const base = this.researchBody(input);
+      const messages = [...(base.messages as Anthropic.MessageParam[])];
       let findings = "";
       let stopReason: string | null = null;
-      for (let i = 0; i < MAX_RESEARCH_ITERATIONS; i++) {
-        const res = await this.client.messages.create({
-          model: input.model,
-          max_tokens: 16000,
-          system: RESEARCH_SYSTEM,
-          thinking: { type: "adaptive" },
-          output_config: { effort: "medium" },
-          tools: tools.length ? tools : undefined,
-          messages,
-        });
+      for (let i = 0; i < input.profile.maxIterations; i++) {
+        const res = await this.client.messages.create({ ...base, messages } as unknown as Anthropic.MessageCreateParamsNonStreaming);
         usage = addUsage(usage, usageOf(res));
         stopReason = res.stop_reason;
-        if (res.stop_reason === "refusal") {
-          throw new AppError("llm_refusal", "Research request was refused by the model", 502);
-        }
+        if (res.stop_reason === "refusal") throw new AppError("llm_refusal", "Research request was refused by the model", 502);
         if (res.stop_reason === "pause_turn") {
           messages.push({ role: "assistant", content: res.content });
           continue;
@@ -150,30 +178,40 @@ export class AnthropicProvider implements LlmProvider {
       if (!findings.trim()) throw new AppError("llm_empty", "Research produced no findings", 502);
 
       // Phase 2: structure the findings.
+      const personaReq = this.personaBody(input.model, findings, input.lead.company ?? input.lead.email);
       const parsed = await this.client.messages.parse({
-        model: input.model,
-        max_tokens: 8000,
-        system: PERSONA_STRUCTURE_SYSTEM,
-        output_config: { format: outputFormat(PersonaSchema), effort: "low" },
-        messages: [
-          {
-            role: "user",
-            content: `Research findings for ${input.lead.company ?? input.lead.email}:\n\n${findings}\n\nConvert these findings into the persona JSON.`,
-          },
-        ],
-      });
+        ...personaReq,
+        output_config: { ...((personaReq.output_config as object) ?? {}), format: outputFormat(PersonaSchema) },
+      } as never);
       usage = addUsage(usage, usageOf(parsed));
-      if (parsed.stop_reason === "refusal") {
-        throw new AppError("llm_refusal", "Persona structuring refused", 502);
-      }
-      const persona = parsed.parsed_output;
+      if (parsed.stop_reason === "refusal") throw new AppError("llm_refusal", "Persona structuring refused", 502);
+      const persona = parsed.parsed_output as Persona | null;
       if (!persona) throw new AppError("llm_parse", "Persona output did not match schema", 502);
+
       const durationMs = Date.now() - started;
-      await this.record("research", input.model, usage, durationMs, stopReason, true, null, ids);
-      return { output: persona, model: input.model, usage, durationMs, stopReason, notes: findings };
+      const cost = await recordLlmCall(this.deps, {
+        purpose: "research",
+        model: input.model,
+        usage,
+        durationMs,
+        stopReason,
+        ok: true,
+        error: null,
+        ...ids,
+      });
+      return { output: persona, model: input.model.model, usage, durationMs, stopReason, notes: findings, costMicroUsd: cost };
     } catch (err) {
       const durationMs = Date.now() - started;
-      await this.record("research", input.model, usage, durationMs, null, false, describeError(err), ids);
+      await recordLlmCall(this.deps, {
+        purpose: "research",
+        model: input.model,
+        usage,
+        durationMs,
+        stopReason: null,
+        ok: false,
+        error: describeError(err),
+        ...ids,
+      });
       throw normaliseError(err);
     } finally {
       release();
@@ -181,38 +219,44 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async draft(input: DraftInput): Promise<LlmResult<DraftOutput>> {
-    const release = await this.acquire();
+    const release = await this.gate.acquire();
     const started = Date.now();
     const ids = { leadId: input.lead.id, campaignId: input.lead.campaignId };
-    let usage: LlmUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    let usage: LlmUsage = ZERO_USAGE;
     try {
-      const blocks = draftSystemBlocks(input.instructions, input.services, input.hardRules);
-      const system: Anthropic.TextBlockParam[] = blocks.map((text, i) => ({
-        type: "text",
-        text,
-        // Cache the whole stable prefix; it is identical for every lead in a campaign.
-        ...(i === blocks.length - 1 ? { cache_control: { type: "ephemeral" as const } } : {}),
-      }));
+      const body = this.draftBody(input);
       const res = await this.client.messages.parse({
-        model: input.model,
-        max_tokens: 8000,
-        system,
-        thinking: { type: "adaptive" },
+        ...body,
         output_config: { format: outputFormat(DraftOutputSchema) },
-        messages: [{ role: "user", content: draftUserMessage(input) }],
-      });
+      } as never);
       usage = usageOf(res);
-      if (res.stop_reason === "refusal") {
-        throw new AppError("llm_refusal", "Draft request was refused by the model", 502);
-      }
-      const out = res.parsed_output;
+      if (res.stop_reason === "refusal") throw new AppError("llm_refusal", "Draft request was refused by the model", 502);
+      const out = res.parsed_output as DraftOutput | null;
       if (!out) throw new AppError("llm_parse", "Draft output did not match schema", 502);
       const durationMs = Date.now() - started;
-      await this.record("draft", input.model, usage, durationMs, res.stop_reason, true, null, ids);
-      return { output: out, model: input.model, usage, durationMs, stopReason: res.stop_reason };
+      const cost = await recordLlmCall(this.deps, {
+        purpose: "draft",
+        model: input.model,
+        usage,
+        durationMs,
+        stopReason: res.stop_reason,
+        ok: true,
+        error: null,
+        ...ids,
+      });
+      return { output: out, model: input.model.model, usage, durationMs, stopReason: res.stop_reason, costMicroUsd: cost };
     } catch (err) {
       const durationMs = Date.now() - started;
-      await this.record("draft", input.model, usage, durationMs, null, false, describeError(err), ids);
+      await recordLlmCall(this.deps, {
+        purpose: "draft",
+        model: input.model,
+        usage,
+        durationMs,
+        stopReason: null,
+        ok: false,
+        error: describeError(err),
+        ...ids,
+      });
       throw normaliseError(err);
     } finally {
       release();
@@ -220,13 +264,13 @@ export class AnthropicProvider implements LlmProvider {
   }
 }
 
-function describeError(err: unknown): string {
+export function describeError(err: unknown): string {
   if (err instanceof Anthropic.APIError) return `${err.name} ${err.status}: ${err.message}`;
   if (err instanceof Error) return `${err.name}: ${err.message}`;
   return String(err);
 }
 
-function normaliseError(err: unknown): Error {
+export function normaliseError(err: unknown): Error {
   if (err instanceof AppError) return err;
   if (err instanceof Anthropic.AuthenticationError) return new AppError("llm_auth", "Anthropic API key rejected", 502);
   if (err instanceof Anthropic.RateLimitError) return new AppError("llm_rate_limited", "Anthropic rate limit hit", 503);
@@ -235,3 +279,5 @@ function normaliseError(err: unknown): Error {
   if (err instanceof Anthropic.APIError) return new AppError("llm_api_error", `${err.status}: ${err.message}`, 502);
   return err instanceof Error ? err : new Error(String(err));
 }
+
+export { usageOf as anthropicUsageOf };

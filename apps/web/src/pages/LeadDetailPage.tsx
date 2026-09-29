@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { LeadDetailDto, LeadDto } from "@mailapp/shared";
+import { formatUsd, type LeadDetailDto, type LeadDto } from "@mailapp/shared";
 import { api } from "../lib/api";
 import { formatDate, fullName } from "../lib/format";
 import { useAuth } from "../hooks/useAuth";
@@ -102,6 +102,16 @@ export function LeadDetailPage() {
                 <KeyValue items={Object.entries(lead.extra).map(([k, v]) => [k, v])} />
               </div>
             )}
+          </div>
+          <div className="card">
+            <h2 className="mb-2 text-sm font-semibold">Model cost</h2>
+            <KeyValue
+              items={[
+                ["Research", formatUsd(lead.researchMicroUsd)],
+                ["Drafting", formatUsd(lead.totalMicroUsd - lead.researchMicroUsd)],
+                ["Total for this lead", <strong className="tabular-nums">{formatUsd(lead.totalMicroUsd)}</strong>],
+              ]}
+            />
           </div>
           <div className="card">
             <h2 className="mb-2 text-sm font-semibold">Milestones</h2>

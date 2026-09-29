@@ -15,6 +15,8 @@ import {
   type SequenceStep,
   type ServiceDto,
   type TimeseriesPoint,
+  type SettingsDto,
+  formatUsd,
 } from "@mailapp/shared";
 import { api, errorMessage } from "../lib/api";
 import { formatDate, fullName, relativeTime } from "../lib/format";
@@ -26,8 +28,11 @@ import { SequenceEditor, validateSequence } from "../components/SequenceEditor";
 import { TimeseriesChart } from "../components/charts";
 import { ChipsInput } from "../components/ChipsInput";
 import { Banner, ConfirmDialog, EmptyState, ErrorBox, Field, PageHeader, Pagination, Spinner, Tabs } from "../components/ui";
+import { AiConfigSummary, CampaignCostTab } from "../components/CostPanel";
+import { AiConfigEditor, aiConfigFromForm, aiFormFrom, type AiConfigForm } from "../components/AiConfigEditor";
+import { useModelCatalogue } from "../components/ModelSelect";
 
-type Tab = "overview" | "leads" | "review" | "settings" | "stats" | "access";
+type Tab = "overview" | "leads" | "review" | "settings" | "stats" | "cost" | "access";
 
 const FUNNEL: Array<{ key: keyof CampaignCounts; label: string }> = [
   { key: "total", label: "Leads" },
@@ -144,6 +149,7 @@ export function CampaignDetailPage() {
           { key: "review", label: "Review queue", count: c.counts.pendingReview },
           { key: "settings", label: editable ? "Edit campaign" : "Sequence & settings" },
           { key: "stats", label: "Stats" },
+          { key: "cost", label: "Cost" },
           ...(isAdmin ? [{ key: "access" as Tab, label: "Access" }] : []),
         ]}
         value={tab}
@@ -155,6 +161,7 @@ export function CampaignDetailPage() {
       {tab === "review" && <ReviewQueue campaignId={id} />}
       {tab === "settings" && <SettingsTab c={c} editable={editable} onSaved={invalidate} />}
       {tab === "stats" && <StatsTab campaignId={id} />}
+      {tab === "cost" && <CampaignCostTab campaignId={id} />}
       {tab === "access" && isAdmin && <AccessTab c={c} />}
 
       <ConfirmDialog
@@ -246,6 +253,24 @@ function Overview({ c }: { c: CampaignDto }) {
               <div className="text-lg font-semibold tabular-nums">{c.counts[k]}</div>
             </div>
           ))}
+        </div>
+      </div>
+      <div className="card space-y-3 text-sm">
+        <h2 className="text-sm font-semibold">AI &amp; cost</h2>
+        <AiConfigSummary ai={c.ai} />
+        <div className="grid grid-cols-3 gap-2 border-t border-gray-100 pt-2">
+          <div>
+            <div className="text-xs text-gray-500">Spent</div>
+            <div className="font-semibold tabular-nums">{formatUsd(c.cost.totalMicroUsd)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Per lead</div>
+            <div className="font-semibold tabular-nums">{formatUsd(c.cost.perLeadMicroUsd)}</div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500">Per email</div>
+            <div className="font-semibold tabular-nums">{formatUsd(c.cost.perEmailMicroUsd)}</div>
+          </div>
         </div>
       </div>
       <div className="card space-y-3 text-sm">
@@ -398,8 +423,22 @@ function SettingsTab({ c, editable, onSaved }: { c: CampaignDto; editable: boole
   const [extraGuidance, setExtraGuidance] = useState(c.extraGuidance);
   const [maxWords, setMaxWords] = useState(c.hardRulesOverride?.maxWords ? String(c.hardRulesOverride.maxWords) : "");
   const [banned, setBanned] = useState<string[]>(c.hardRulesOverride?.bannedPhrases ?? []);
+  const [ai, setAi] = useState<AiConfigForm>(aiFormFrom(c.aiConfig));
   const [error, setError] = useState<string | null>(null);
   const services = useQuery({ queryKey: ["services"], queryFn: () => api.get<{ items: ServiceDto[] }>("/api/services") });
+  const catalogue = useModelCatalogue();
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ settings: SettingsDto }>("/api/settings") });
+  const orgDefaults = (() => {
+    const sd = settings.data?.settings;
+    if (!sd || !catalogue.data) return null;
+    const label = (value: string) => catalogue.data!.models.find((m) => m.value === value)?.label ?? value;
+    return {
+      researchModelLabel: label(sd.researchModel),
+      draftModelLabel: label(sd.llmModel),
+      researchMode: sd.researchMode,
+      batchStrategy: sd.batchStrategy,
+    };
+  })();
   const save = useMutation({
     mutationFn: (body: unknown) => api.patch<{ campaign: CampaignDto }>(`/api/campaigns/${c.id}`, body),
     onSuccess: () => {
@@ -425,6 +464,8 @@ function SettingsTab({ c, editable, onSaved }: { c: CampaignDto; editable: boole
       replyTo: replyTo || undefined,
       extraGuidance,
       hardRulesOverride: Object.keys(override).length ? override : undefined,
+      // Always sent, so clearing every override switches the campaign back to inheriting.
+      aiConfig: aiConfigFromForm(ai) ?? {},
     };
     const parsed = UpdateCampaignSchema.safeParse(raw);
     if (!parsed.success) {
@@ -479,6 +520,19 @@ function SettingsTab({ c, editable, onSaved }: { c: CampaignDto; editable: boole
           ))}
         </div>
       </div>
+      <div className="card space-y-4">
+        <h2 className="text-sm font-semibold">AI models &amp; cost</h2>
+        <AiConfigEditor
+          value={ai}
+          onChange={setAi}
+          disabled={disabled}
+          orgDefaults={orgDefaults}
+          leads={c.counts.total}
+          steps={sequence.length}
+          catalogue={catalogue.data}
+        />
+      </div>
+
       <div className="card space-y-4">
         <h2 className="text-sm font-semibold">Sender & guidance</h2>
         <p className="text-xs text-gray-500">Blank sender fields use the campaign owner's profile, then the organisation settings.</p>

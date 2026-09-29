@@ -32,14 +32,24 @@ import {
 } from "./service.js";
 import { buildStatusWorkbook } from "../excel/export.js";
 import { campaignTimeseries } from "../analytics/service.js";
+import { EMPTY_COST, campaignCost, campaignCostDto, campaignCostMap } from "../analytics/cost.js";
+import { resolveCampaignPlan } from "../llm/catalogue.js";
+import { cancelCampaignBatches } from "../llm/batch/runner.js";
 import type { SendJob } from "../../jobs/types.js";
 
 export async function campaignsRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
-  /** DTO for one campaign as seen by the caller (owner name + effective access). */
+  /** DTO for one campaign as seen by the caller (owner name, effective access, AI plan, spend). */
   const dtoFor = async (req: FastifyRequest, c: CampaignRow, access?: CampaignAccessLevel) => {
     const names = await ownerNames(ctx, [c]);
     const myAccess = access ?? ((await campaignAccessFor(ctx, principalOf(req), c)) as CampaignAccessLevel);
-    return toCampaignDto(c, await campaignCounts(ctx, c.id), { createdByName: c.createdBy ? (names.get(c.createdBy) ?? null) : null, myAccess });
+    const settings = await ctx.settings.get();
+    const plan = resolveCampaignPlan(settings, c, { forceMock: ctx.config.LLM_PROVIDER === "mock" });
+    return toCampaignDto(c, await campaignCounts(ctx, c.id), {
+      createdByName: c.createdBy ? (names.get(c.createdBy) ?? null) : null,
+      myAccess,
+      ai: plan.resolved,
+      cost: await campaignCost(ctx, c.id),
+    });
   };
 
   app.get("/api/campaigns", { preHandler: app.authenticate }, async (req) => {
@@ -57,12 +67,22 @@ export async function campaignsRoutes(app: FastifyInstance, ctx: AppContext): Pr
       .from(campaigns)
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(campaigns.createdAt));
-    const [counts, names, access] = await Promise.all([campaignCountsMap(ctx, rows.map((r) => r.id)), ownerNames(ctx, rows), campaignAccessMap(ctx, who, rows)]);
+    const ids = rows.map((r) => r.id);
+    const [counts, names, access, costs, settings] = await Promise.all([
+      campaignCountsMap(ctx, ids),
+      ownerNames(ctx, rows),
+      campaignAccessMap(ctx, who, rows),
+      campaignCostMap(ctx, ids),
+      ctx.settings.get(),
+    ]);
+    const forceMock = ctx.config.LLM_PROVIDER === "mock";
     return {
       items: rows.map((r) =>
         toCampaignDto(r, counts.get(r.id) ?? emptyCounts(), {
           createdByName: r.createdBy ? (names.get(r.createdBy) ?? null) : null,
           myAccess: (access.get(r.id) === "none" ? "view" : access.get(r.id)) as CampaignAccessLevel,
+          ai: resolveCampaignPlan(settings, r, { forceMock }).resolved,
+          cost: costs.get(r.id) ?? EMPTY_COST,
         }),
       ),
     };
@@ -122,6 +142,11 @@ export async function campaignsRoutes(app: FastifyInstance, ctx: AppContext): Pr
     if (body.replyTo !== undefined) set.replyTo = body.replyTo || null;
     if (body.extraGuidance !== undefined) set.extraGuidance = body.extraGuidance;
     if (body.hardRulesOverride !== undefined) set.hardRulesOverride = body.hardRulesOverride ?? null;
+    if (body.aiConfig !== undefined) {
+      // An empty object means "inherit everything", which is stored as null.
+      const ai = body.aiConfig ?? null;
+      set.aiConfig = ai && Object.values(ai).some((v) => v !== undefined) ? ai : null;
+    }
     const [row] = await ctx.db.update(campaigns).set(set).where(eq(campaigns.id, id)).returning();
     await ctx.audit.log({ userId: req.user!.sub, userEmail: req.user!.email, action: "campaign.update", entityType: "campaign", entityId: id, metadata: { fields: Object.keys(body) }, ip: req.ip });
     return { campaign: await dtoFor(req, row, "full") };
@@ -139,6 +164,8 @@ export async function campaignsRoutes(app: FastifyInstance, ctx: AppContext): Pr
         enqueued = r.enqueued;
       } else {
         campaign = await setCampaignStatus(ctx, id, action === "pause" ? "paused" : "archived");
+        // Stop paying for work whose results would be discarded anyway.
+        await cancelCampaignBatches(ctx, id).catch((err) => ctx.logger.warn({ err, id }, "failed to cancel campaign batches"));
       }
       await ctx.audit.log({ userId: req.user!.sub, userEmail: req.user!.email, action: `campaign.${action}`, entityType: "campaign", entityId: id, metadata: { enqueued }, ip: req.ip });
       return { campaign: await dtoFor(req, campaign, "full"), enqueued };
@@ -246,6 +273,13 @@ export async function campaignsRoutes(app: FastifyInstance, ctx: AppContext): Pr
       .header("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
       .header("content-disposition", `attachment; filename="${name}"`)
       .send(buffer);
+  });
+
+  /** Spend to date, the projection for the work still to do, and any batch in flight. */
+  app.get("/api/campaigns/:id/cost", { preHandler: app.authenticate }, async (req) => {
+    const id = requireUuid((req.params as { id: string }).id);
+    await requireCampaignAccess(ctx, req, id, "view");
+    return campaignCostDto(ctx, id);
   });
 
   app.post("/api/campaigns/:id/approve-all", { preHandler: app.requireRole("operator") }, async (req) => {

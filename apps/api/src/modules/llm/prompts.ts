@@ -1,4 +1,4 @@
-import type { HardRules, Persona } from "@mailapp/shared";
+import type { HardRules, Persona, ResearchMode } from "@mailapp/shared";
 import type { LeadRow, ServiceRow } from "../../db/schema.js";
 import type { DraftInput, InstructionBundle, ResearchInput, WebsiteExtract } from "./provider.js";
 
@@ -42,7 +42,7 @@ export function serviceBlock(s: ServiceRow, includeDetails = true): string {
   return lines.join("\n");
 }
 
-export const RESEARCH_SYSTEM = `You are a B2B sales research analyst. You research a company and a specific person there so that a colleague can write a relevant, honest outreach email.
+const RESEARCH_SYSTEM_BASE = `You are a B2B sales research analyst. You research a company and a specific person there so that a colleague can write a relevant, honest outreach email.
 
 Ground rules:
 - Prefer primary sources (the company website, LinkedIn, press releases, filings, reputable news). Note the URL of each fact.
@@ -50,6 +50,26 @@ Ground rules:
 - Distinguish the company from similarly named companies; use the website domain and location to disambiguate.
 - Keep findings concrete: products, customers, pricing model, team size signals, hiring, recent launches, funding, partnerships, tech stack signals, public statements by the person.
 - Be concise. Bullet points are fine.`;
+
+/**
+ * Depth instructions per research mode. The tool budgets are enforced by the adapters; this
+ * tells the model how much ground to cover so it does not over-research on a cheap run or
+ * stop early on an expensive one.
+ */
+const RESEARCH_DEPTH: Record<ResearchMode, string> = {
+  normal: `Depth: NORMAL. Work mainly from the supplied website extract. Use at most a couple of searches, only to confirm what the company does and who the person is. Do not chase secondary sources. Stop as soon as you can answer the task.`,
+  great: `Depth: GREAT. Confirm the company and the person across several independent sources. Look for the current offering, rough size or stage, and anything timely from the last twelve months. Do not go beyond what is needed to write one relevant email.`,
+  advance: `Depth: ADVANCE. Dig properly: recent news, funding, hiring patterns, product launches, partnerships, tech-stack signals, and anything the person has published or said publicly. Cross-check contradictory claims and say which source you trust. Note dates on every timely fact.`,
+};
+
+export function researchSystem(mode: ResearchMode): string {
+  return `${RESEARCH_SYSTEM_BASE}
+
+${RESEARCH_DEPTH[mode]}`;
+}
+
+/** Kept for callers that do not vary intensity (and for the existing unit test). */
+export const RESEARCH_SYSTEM = researchSystem("great");
 
 export function researchUserMessage(input: ResearchInput): string {
   return `We are researching this lead before outreach.
@@ -69,7 +89,7 @@ ${websiteBlock(input.website)}
 ## Task
 ${
   input.webSearch
-    ? "Use web search (and fetch pages when useful) to verify and enrich the above."
+    ? `Use web search (and fetch pages when useful) to verify and enrich the above. You may run at most ${input.profile.maxSearches} searches and fetch at most ${input.profile.maxFetches} pages, so choose them deliberately.`
     : "Do not use external tools; work from the material above and general knowledge, and be explicit about uncertainty."
 }
 Produce research findings covering: what the company does and for whom; its offering; industry; size/stage signals with evidence; what this person's role likely owns; their likely priorities right now; plausible pain points relevant to our services; recent signals (news, hiring, launches, funding) with dates and URLs; specific personalisation hooks that are verifiable; sources consulted; overall confidence; caveats.`;

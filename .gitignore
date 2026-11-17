@@ -7,9 +7,10 @@ coverage/
 !.env.example
 *.log
 .DS_Store
-storage/
+/storage/
 cdk.out/
 cdk.context.json
 *.tsbuildinfo
 .vite/
 test-results/
+apps/api/storage/

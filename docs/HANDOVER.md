@@ -320,7 +320,7 @@ npm install
 cp .env.example .env            # LLM_PROVIDER=mock, SES_MODE=mock, Postgres on 5433
 docker compose up -d postgres
 npm run db:migrate
-npm run db:seed                 # admin@example.com / ChangeMe!12345 + default docs
+npm run db:seed                 # admin@stech.com / admin123 + default docs
 npm run dev:api                 # http://localhost:4000
 npm run dev:worker              # second terminal
 npm run dev:web                 # http://localhost:5173, proxies /api, /u, /webhooks

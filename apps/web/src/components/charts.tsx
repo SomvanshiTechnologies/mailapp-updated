@@ -29,7 +29,16 @@ export function TimeseriesChart({
   keys?: SeriesKey[];
   height?: number;
 }) {
-  if (!points.length) return <EmptyState title="No activity in this range" />;
+  const hasData = points.some((p) => keys.some((k) => Number(p[k]) > 0));
+  if (!points.length || !hasData)
+    return (
+      <EmptyState
+        compact
+        icon={<svg viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-6" /></svg>}
+        title="No activity in this range"
+        hint="Sent, delivered, opened and replied counts appear here once emails start going out."
+      />
+    );
   return (
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
@@ -39,9 +48,9 @@ export function TimeseriesChart({
           <YAxis tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={false} tickLine={false} width={36} allowDecimals={false} />
           <Tooltip
             labelFormatter={(l) => fmtDay(String(l))}
-            contentStyle={{ fontSize: 12, borderRadius: 6, borderColor: CHART_GRID }}
+            contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: CHART_GRID, boxShadow: "0 8px 24px rgb(15 27 45 / 0.10)" }}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} iconType="plainline" />
+          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" iconSize={8} />
           {keys.map((k) => (
             <Line
               key={k}
@@ -49,7 +58,7 @@ export function TimeseriesChart({
               dataKey={k}
               name={k}
               stroke={SERIES[k]}
-              strokeWidth={2}
+              strokeWidth={1.75}
               dot={false}
               activeDot={{ r: 4, strokeWidth: 2, stroke: "#fff" }}
               isAnimationActive={false}
@@ -63,7 +72,15 @@ export function TimeseriesChart({
 
 export function SesMetricsChart({ series, height = 240 }: { series: SesCloudWatchSeries[]; height?: number }) {
   const metrics = series.filter((s) => s.points.length > 0);
-  if (!metrics.length) return <EmptyState title="No SES metric data points" />;
+  if (!metrics.length)
+    return (
+      <EmptyState
+        compact
+        icon={<svg viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-6" /></svg>}
+        title="No SES metric data points"
+        hint="Send, delivery, bounce and complaint series show up after the first sends."
+      />
+    );
   // merge into rows keyed by timestamp
   const rows = new Map<string, Record<string, number | string>>();
   for (const s of metrics) {
@@ -82,15 +99,15 @@ export function SesMetricsChart({ series, height = 240 }: { series: SesCloudWatc
           <CartesianGrid stroke={CHART_GRID} vertical={false} />
           <XAxis dataKey="timestamp" tickFormatter={fmt} tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={{ stroke: CHART_GRID }} tickLine={false} />
           <YAxis tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={false} tickLine={false} width={36} allowDecimals={false} />
-          <Tooltip labelFormatter={(l) => fmt(String(l))} contentStyle={{ fontSize: 12, borderRadius: 6, borderColor: CHART_GRID }} />
-          <Legend wrapperStyle={{ fontSize: 12 }} iconType="plainline" />
+          <Tooltip labelFormatter={(l) => fmt(String(l))} contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: CHART_GRID, boxShadow: "0 8px 24px rgb(15 27 45 / 0.10)" }} />
+          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" iconSize={8} />
           {metrics.map((s) => (
             <Line
               key={s.metric}
               type="monotone"
               dataKey={s.metric}
               stroke={SES_SERIES[s.metric] ?? "#8a8984"}
-              strokeWidth={2}
+              strokeWidth={1.75}
               dot={false}
               isAnimationActive={false}
             />

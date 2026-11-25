@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatTokens, formatUsd } from "@mailapp/shared";
 import type {
+  CampaignDto,
+  EmailDto,
   LlmUsageDto,
   OverviewAnalytics,
   SesAccountInfo,
@@ -10,19 +11,32 @@ import type {
   SystemStatus,
   TimeseriesPoint,
 } from "@mailapp/shared";
+import { ClipboardCheck, Reply, Send, Users, Rocket } from "lucide-react";
 import { api } from "../lib/api";
-import { compactNumber, formatDate, percent } from "../lib/format";
+import { compactNumber } from "../lib/format";
 import { StatTile } from "../components/StatTile";
 import { SesMetricsChart, TimeseriesChart } from "../components/charts";
 import { CostByModelTable, CostTile } from "../components/CostPanel";
-import { StatusBadge } from "../components/StatusBadge";
-import { Banner, ErrorBox, KeyValue, PageHeader, Spinner } from "../components/ui";
+import {
+  ACTION_ICONS,
+  ActionCenter,
+  CampaignOverview,
+  HealthCard,
+  PipelineCard,
+  SecondaryMetrics,
+  Section,
+  sumCounts,
+  type ActionItem,
+} from "../components/dashboard";
+import { Banner, ErrorBox, KeyValue, PageHeader, Spinner, StatusDot } from "../components/ui";
 
 const RANGES = [
   { key: "7", label: "7 days" },
   { key: "30", label: "30 days" },
   { key: "90", label: "90 days" },
 ];
+
+const PERFORMANCE_KEYS = ["sent", "delivered", "opened", "replied"] as const;
 
 function rangeQuery(days: string) {
   const to = new Date();
@@ -60,22 +74,101 @@ export function DashboardPage() {
     queryFn: () => api.get<SystemStatus>("/api/system/status"),
     refetchInterval: 60_000,
   });
+  const campaigns = useQuery({
+    queryKey: ["campaigns", "all"],
+    queryFn: () => api.get<{ items: CampaignDto[] }>("/api/campaigns"),
+    refetchInterval: 60_000,
+  });
+  // Drafts waiting on a reviewer: used to count validation failures (the API returns each draft's validation result).
+  const reviewDrafts = useQuery({
+    queryKey: ["emails", "pending_review", "dashboard"],
+    queryFn: () => api.get<{ items: EmailDto[]; total: number }>("/api/emails", { status: "pending_review", pageSize: 200 }),
+    refetchInterval: 60_000,
+  });
+  const failedSends = useQuery({
+    queryKey: ["emails", "failed", "dashboard"],
+    queryFn: () => api.get<{ items: EmailDto[]; total: number }>("/api/emails", { status: "failed", pageSize: 1 }),
+    refetchInterval: 60_000,
+  });
 
   const t = overview.data?.totals;
   const r = overview.data?.rates;
 
+  // Pipeline, active campaigns and the lead counts come from the campaign list (all-time, archived excluded).
+  const live = useMemo(() => (campaigns.data?.items ?? []).filter((c) => c.status !== "archived"), [campaigns.data]);
+  const counts = useMemo(() => sumCounts(live.map((c) => c.counts)), [live]);
+  const activeCampaigns = live.filter((c) => c.status === "active").length;
+  const leadsProcessed = Math.max(0, counts.total - counts.pending);
+
+  const validationFailures = (reviewDrafts.data?.items ?? []).filter((e) => e.validation && !e.validation.ok).length;
+  const repliedCampaigns = live.filter((c) => c.counts.replied > 0).length;
+
+  const actions: ActionItem[] = [
+    {
+      key: "review",
+      icon: ACTION_ICONS.review,
+      tone: "warning",
+      title: "Drafts pending review",
+      detail: "Approve, edit or reject in the review queue",
+      count: reviewDrafts.data?.total ?? counts.pendingReview,
+      to: "/review",
+    },
+    {
+      key: "validation",
+      icon: ACTION_ICONS.validation,
+      tone: "warning",
+      title: "Drafts that failed validation",
+      detail: "Broke a hard rule, fix or regenerate before approving",
+      count: validationFailures,
+      to: "/review",
+    },
+    {
+      key: "failedLeads",
+      icon: ACTION_ICONS.failedLeads,
+      tone: "critical",
+      title: "Leads with failed jobs",
+      detail: "Research or drafting failed, retry from the campaign",
+      count: counts.failed,
+      to: "/campaigns",
+    },
+    {
+      key: "failedSends",
+      icon: ACTION_ICONS.failedSends,
+      tone: "critical",
+      title: "Emails that failed to send",
+      detail: "Open the campaign to see the error and retry",
+      count: failedSends.data?.total ?? 0,
+      to: "/campaigns",
+    },
+    {
+      key: "replies",
+      icon: ACTION_ICONS.replies,
+      tone: "info",
+      title: "Replies received",
+      detail: `Across ${repliedCampaigns} campaign${repliedCampaigns === 1 ? "" : "s"}, follow-ups stopped`,
+      count: counts.replied,
+      to: "/campaigns",
+    },
+  ];
+
+  const isMock = system.data && (system.data.sesMode === "mock" || system.data.llmProvider === "mock");
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        subtitle="Outreach performance, SES health and system status"
+        subtitle="Outreach operations at a glance"
         actions={
-          <div className="flex gap-1 rounded-md border border-gray-200 bg-white p-0.5">
+          <div role="group" aria-label="Date range" className="inline-flex rounded-lg border border-gray-200 bg-gray-100/70 p-0.5">
             {RANGES.map((x) => (
               <button
                 key={x.key}
                 onClick={() => setDays(x.key)}
-                className={"rounded px-2 py-1 text-xs " + (days === x.key ? "bg-brand-50 font-medium text-brand-700" : "text-gray-600")}
+                aria-pressed={days === x.key}
+                className={
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors " +
+                  (days === x.key ? "bg-white text-gray-900 shadow-card" : "text-gray-500 hover:text-gray-800")
+                }
               >
                 {x.label}
               </button>
@@ -84,85 +177,80 @@ export function DashboardPage() {
         }
       />
 
-      {system.data && (system.data.sesMode === "mock" || system.data.llmProvider === "mock") && (
-        <Banner kind="warning">
-          Running with {system.data.sesMode === "mock" ? "SES in mock mode (no real emails are sent)" : ""}
-          {system.data.sesMode === "mock" && system.data.llmProvider === "mock" ? " and " : ""}
-          {system.data.llmProvider === "mock" ? "the mock LLM provider (drafts are placeholders)" : ""}. Configure the
-          environment before production use.
-        </Banner>
+      {isMock && system.data && (
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          <StatusDot tone="warning" />
+          <span className="font-medium text-gray-700">Mock mode</span>
+          <span>
+            {system.data.sesMode === "mock" ? "SES dry run, no real emails are sent" : ""}
+            {system.data.sesMode === "mock" && system.data.llmProvider === "mock" ? " · " : ""}
+            {system.data.llmProvider === "mock" ? "placeholder drafts" : ""}
+          </span>
+        </div>
       )}
 
-      {overview.isLoading ? (
+      {/* Overview: five headline numbers, then the quieter delivery metrics as one strip. */}
+      {overview.isLoading || campaigns.isLoading ? (
         <Spinner />
       ) : overview.error ? (
         <ErrorBox message={(overview.error as Error).message} />
       ) : (
         t &&
         r && (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <StatTile label="Sent" value={t.sent} />
-            <StatTile label="Delivered" value={t.delivered} rate={r.deliveryRate} rateLabel="of sent" />
-            <StatTile label="Opened" value={t.opened} rate={r.openRate} rateLabel="open rate" />
-            <StatTile label="Clicked" value={t.clicked} rate={r.clickRate} rateLabel="click rate" />
-            <StatTile label="Replied" value={t.replied} rate={r.replyRate} rateLabel="reply rate" tone="good" />
-            <StatTile label="Bounced" value={t.bounced} rate={r.bounceRate} rateLabel="bounce rate" tone={r.bounceRate > 0.05 ? "critical" : undefined} />
-            <StatTile label="Complaints" value={t.complained} rate={r.complaintRate} rateLabel="complaint rate" tone={r.complaintRate > 0.001 ? "critical" : undefined} />
-            <StatTile label="Pending review" value={t.pendingReview} tone={t.pendingReview > 0 ? "warning" : undefined} />
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+              <StatTile primary icon={Rocket} label="Active campaigns" value={activeCampaigns} hint={`${live.length} in total`} />
+              <StatTile primary icon={Users} label="Leads processed" value={leadsProcessed} hint={`of ${compactNumber(counts.total)} imported`} />
+              <StatTile
+                primary
+                icon={ClipboardCheck}
+                label="Pending review"
+                value={t.pendingReview}
+                tone={t.pendingReview > 0 ? "warning" : undefined}
+                hint={t.pendingReview > 0 ? "Waiting for a reviewer" : "Nothing waiting"}
+              />
+              <StatTile primary icon={Send} label="Emails sent" value={t.sent} hint={`last ${days} days`} />
+              <StatTile primary icon={Reply} label="Replies received" value={t.replied} rate={r.replyRate} rateLabel="reply rate" tone={t.replied > 0 ? "good" : undefined} />
+            </div>
+            <SecondaryMetrics
+              items={[
+                { label: "Delivered", value: t.delivered, rate: r.deliveryRate, rateLabel: "of sent" },
+                { label: "Opened", value: t.opened, rate: r.openRate, rateLabel: "open rate" },
+                { label: "Clicked", value: t.clicked, rate: r.clickRate, rateLabel: "click rate" },
+                { label: "Bounced", value: t.bounced, rate: r.bounceRate, rateLabel: "bounce rate", tone: r.bounceRate > 0.05 ? "critical" : undefined },
+                { label: "Complaints", value: t.complained, rate: r.complaintRate, rateLabel: "rate", tone: r.complaintRate > 0.001 ? "critical" : undefined },
+              ]}
+            />
           </div>
         )
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <div className="card xl:col-span-2">
-          <h2 className="mb-2 text-sm font-semibold">Activity over time</h2>
-          {series.isLoading ? <Spinner /> : series.error ? <ErrorBox message={(series.error as Error).message} /> : <TimeseriesChart points={series.data?.points ?? []} />}
-        </div>
-        <div className="card">
-          <h2 className="mb-2 text-sm font-semibold">SES account</h2>
-          {ses.isLoading ? (
+      <PipelineCard counts={counts} />
+
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+        <Section
+          className="xl:col-span-2"
+          title="Campaign performance"
+          subtitle={`Sent, delivered, opened and replied · last ${days} days`}
+        >
+          {series.isLoading ? (
             <Spinner />
-          ) : ses.error ? (
-            <ErrorBox message={(ses.error as Error).message} />
-          ) : ses.data ? (
-            <div className="space-y-2">
-              {ses.data.error && <Banner kind="danger">{ses.data.error}</Banner>}
-              <KeyValue
-                items={[
-                  ["Mode", ses.data.mode === "mock" ? "mock (dry run)" : "live"],
-                  ["Region", ses.data.region],
-                  ["Sending enabled", ses.data.sendingEnabled ? "yes" : "no"],
-                  ["Production access", ses.data.productionAccessEnabled ? "yes" : "sandbox"],
-                  ["Enforcement status", ses.data.enforcementStatus ?? "—"],
-                  ["24h quota", ses.data.sendQuota ? compactNumber(ses.data.sendQuota.max24HourSend) : "—"],
-                  ["Sent last 24h", ses.data.sendQuota ? compactNumber(ses.data.sendQuota.sentLast24Hours) : "—"],
-                  ["Max send rate", ses.data.sendQuota ? `${ses.data.sendQuota.maxSendRate}/s` : "—"],
-                  ["VDM", ses.data.vdmEnabled === null ? "—" : ses.data.vdmEnabled ? "enabled" : "disabled"],
-                  ["Fetched", formatDate(ses.data.fetchedAt)],
-                ]}
-              />
-              {ses.data.sendQuota && ses.data.sendQuota.max24HourSend > 0 && (
-                <div>
-                  <div className="mb-1 flex justify-between text-xs text-gray-500">
-                    <span>Quota used</span>
-                    <span>{percent(ses.data.sendQuota.sentLast24Hours / ses.data.sendQuota.max24HourSend)}</span>
-                  </div>
-                  <div className="h-2 w-full rounded bg-brand-100">
-                    <div
-                      className="h-2 rounded bg-brand-500"
-                      style={{ width: `${Math.min(100, (100 * ses.data.sendQuota.sentLast24Hours) / ses.data.sendQuota.max24HourSend)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : null}
-        </div>
+          ) : series.error ? (
+            <ErrorBox message={(series.error as Error).message} />
+          ) : (
+            <TimeseriesChart points={series.data?.points ?? []} keys={[...PERFORMANCE_KEYS]} />
+          )}
+        </Section>
+        <ActionCenter items={actions} loading={campaigns.isLoading} />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <div className="card xl:col-span-2">
-          <h2 className="mb-2 text-sm font-semibold">SES metrics (CloudWatch, last 24h)</h2>
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+        <CampaignOverview campaigns={live} />
+        <HealthCard system={system.data} ses={ses.data} />
+      </div>
+
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+        <Section className="xl:col-span-2" title="SES delivery metrics" subtitle="CloudWatch, last 24 hours">
           {sesMetrics.isLoading ? (
             <Spinner />
           ) : sesMetrics.error ? (
@@ -177,120 +265,38 @@ export function DashboardPage() {
           ) : (
             <SesMetricsChart series={sesMetrics.data?.series ?? []} />
           )}
-        </div>
-        <div className="space-y-4">
-          <div className="card">
-            <h2 className="mb-2 text-sm font-semibold">Model spend</h2>
-            {llm.isLoading ? (
-              <Spinner />
-            ) : llm.data ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-2">
-                  <CostTile label={`Total (${days}d)`} value={formatUsd(llm.data.totalMicroUsd)} hint={`${compactNumber(llm.data.calls)} calls`} />
-                  <CostTile label="Per email sent" value={formatUsd(llm.data.microUsdPerSentEmail)} hint="the unit economic" />
-                  <CostTile label="Per lead" value={formatUsd(llm.data.microUsdPerLead)} hint="research + drafts" />
-                </div>
-                <KeyValue
-                  items={[
-                    ["Input tokens", formatTokens(llm.data.inputTokens)],
-                    ["Cache reads", formatTokens(llm.data.cacheReadTokens)],
-                    ["Output tokens", formatTokens(llm.data.outputTokens)],
-                    ["Failures", compactNumber(llm.data.failures)],
-                    ["Avg latency", `${Math.round(llm.data.avgLatencyMs)} ms`],
-                  ]}
-                />
-                <details className="rounded-md border border-gray-200">
-                  <summary className="cursor-pointer px-2 py-1 text-xs font-medium text-gray-600">By model</summary>
-                  <div className="px-2 pb-2">
-                    <CostByModelTable rows={llm.data.byModel} />
-                  </div>
-                </details>
-              </div>
-            ) : (
-              <ErrorBox message="Unavailable" />
-            )}
-          </div>
-          <div className="card">
-            <h2 className="mb-2 text-sm font-semibold">System</h2>
-            {system.data ? (
-              <div className="space-y-2 text-sm">
-                <KeyValue
-                  items={[
-                    ["DB", system.data.db],
-                    ["Queue", system.data.queue],
-                    ["Sent today", `${system.data.sentToday} / ${system.data.dailyCap}`],
-                    ["Last SES sync", formatDate(system.data.lastSesSyncAt)],
-                  ]}
-                />
-                <table className="table text-xs">
-                  <thead>
-                    <tr>
-                      <th>Queue</th>
-                      <th>Active</th>
-                      <th>Waiting</th>
-                      <th>Failed</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {system.data.queues.map((q) => (
-                      <tr key={q.queue}>
-                        <td>{q.queue}</td>
-                        <td>{q.active}</td>
-                        <td>{q.created + q.retry}</td>
-                        <td className={q.failed ? "text-red-700" : ""}>{q.failed}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <Link to="/system" className="text-xs text-brand-700 hover:underline">
-                  View system page →
-                </Link>
-              </div>
-            ) : (
-              <Spinner />
-            )}
-          </div>
-        </div>
-      </div>
+        </Section>
 
-      <div className="card">
-        <h2 className="mb-2 text-sm font-semibold">By campaign</h2>
-        {overview.data && overview.data.byCampaign.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Campaign</th>
-                <th>Status</th>
-                <th className="text-right">Sent</th>
-                <th className="text-right">Delivered</th>
-                <th className="text-right">Opened</th>
-                <th className="text-right">Replied</th>
-                <th className="text-right">Bounced</th>
-              </tr>
-            </thead>
-            <tbody>
-              {overview.data.byCampaign.map((c) => (
-                <tr key={c.campaignId}>
-                  <td>
-                    <Link to={`/campaigns/${c.campaignId}`} className="text-brand-700 hover:underline">
-                      {c.name}
-                    </Link>
-                  </td>
-                  <td>
-                    <StatusBadge status={c.status} />
-                  </td>
-                  <td className="text-right tabular-nums">{c.sent}</td>
-                  <td className="text-right tabular-nums">{c.delivered}</td>
-                  <td className="text-right tabular-nums">{c.opened}</td>
-                  <td className="text-right tabular-nums">{c.replied}</td>
-                  <td className="text-right tabular-nums">{c.bounced}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="text-sm text-gray-500">No campaigns in this range.</p>
-        )}
+        <Section title="Model spend" subtitle={`Last ${days} days`}>
+          {llm.isLoading ? (
+            <Spinner />
+          ) : llm.data ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-2">
+                <CostTile label="Total" value={formatUsd(llm.data.totalMicroUsd)} hint={`${compactNumber(llm.data.calls)} calls`} />
+                <CostTile label="Per email" value={formatUsd(llm.data.microUsdPerSentEmail)} hint="sent" />
+                <CostTile label="Per lead" value={formatUsd(llm.data.microUsdPerLead)} hint="research + drafts" />
+              </div>
+              <KeyValue
+                items={[
+                  ["Input tokens", formatTokens(llm.data.inputTokens)],
+                  ["Cache reads", formatTokens(llm.data.cacheReadTokens)],
+                  ["Output tokens", formatTokens(llm.data.outputTokens)],
+                  ["Failures", compactNumber(llm.data.failures)],
+                  ["Avg latency", `${Math.round(llm.data.avgLatencyMs)} ms`],
+                ]}
+              />
+              <details className="rounded-lg border border-gray-200">
+                <summary className="cursor-pointer px-3 py-1.5 text-xs font-medium text-gray-600">By model</summary>
+                <div className="px-3 pb-2">
+                  <CostByModelTable rows={llm.data.byModel} />
+                </div>
+              </details>
+            </div>
+          ) : (
+            <ErrorBox message="Unavailable" />
+          )}
+        </Section>
       </div>
     </div>
   );

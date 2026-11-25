@@ -71,7 +71,7 @@ export function SettingsPage() {
   const num = (v: string) => (v === "" ? 0 : Number(v));
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="max-w-4xl space-y-4">
       <PageHeader
         title="Settings"
         subtitle={`Organisation defaults · last updated ${formatDate(q.data?.settings.updatedAt)}`}

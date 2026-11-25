@@ -128,7 +128,7 @@ export function CampaignNewPage() {
   const canProceedFromUpload = !!file && !!preview && preview.missingRequired.length === 0 && preview.totalRows > 0;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="max-w-5xl">
       <PageHeader title="New campaign" subtitle={`Step ${step} of 3 — ${step === 1 ? "Upload leads" : step === 2 ? "Configure" : "Review & create"}`} />
 
       {step === 1 && (

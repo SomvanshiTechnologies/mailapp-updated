@@ -33,10 +33,21 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-gray-50 p-4">
-      <form onSubmit={submit} className="card w-full max-w-sm space-y-4">
+    <div
+      className="relative flex min-h-full flex-col items-center justify-center overflow-hidden bg-cream-50 p-4"
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 flex select-none items-center justify-center text-[min(46vw,34rem)] font-black italic leading-none tracking-tighter text-gray-900/[0.035]"
+      >
+        SGT
+      </div>
+      <div className="mb-6">
+        <img src="/brand/sgt-logo.jpeg" alt="Somvanshi Global Technologies" className="relative h-24 w-auto mix-blend-multiply" />
+      </div>
+      <form onSubmit={submit} className="card relative z-10 w-full max-w-sm space-y-4 p-6 shadow-pop">
         <div>
-          <h1 className="text-lg font-semibold">Outreach Engine</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Outreach Engine</h1>
           <p className="text-sm text-gray-500">Sign in to continue</p>
         </div>
         {error && (
@@ -69,6 +80,7 @@ export function LoginPage() {
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
+      <p className="relative z-10 mt-6 text-xs text-gray-500">© Somvanshi Global Technologies · Outreach Engine</p>
     </div>
   );
 }

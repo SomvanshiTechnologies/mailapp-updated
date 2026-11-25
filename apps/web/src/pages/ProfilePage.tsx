@@ -21,7 +21,7 @@ export function ProfilePage() {
   const org = settings.data?.settings;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="max-w-3xl space-y-4">
       <PageHeader title="My profile" subtitle={`${user.email} · ${user.role}`} />
       <SenderForm user={user} org={org} onSaved={refreshUser} />
       <ImapForm user={user} onSaved={refreshUser} />

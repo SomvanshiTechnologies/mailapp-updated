@@ -20,9 +20,9 @@ import { Banner, ErrorBox, Spinner } from "./ui";
 export function CostTile({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "good" | "warning" }) {
   const valueCls = tone === "warning" ? "text-amber-700" : tone === "good" ? "text-emerald-700" : "text-gray-900";
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className={"mt-0.5 text-lg font-semibold tabular-nums " + valueCls}>{value}</div>
+    <div className="rounded-lg border border-gray-200/80 bg-gray-50/60 px-3 py-2.5">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-gray-500">{label}</div>
+      <div className={"mt-1 text-lg font-semibold tabular-nums tracking-tight " + valueCls}>{value}</div>
       {hint && <div className="text-[11px] text-gray-400">{hint}</div>}
     </div>
   );

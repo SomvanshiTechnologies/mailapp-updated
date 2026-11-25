@@ -45,6 +45,14 @@ export interface MailAppConfig {
   llmModel: string;
   sesDailyCap: number;
   sesMaxSendRate: number;
+  /** "ecs" = Fargate + RDS + ALB stacks; "ec2" = a single EC2 instance running the Docker image. */
+  deployTarget: "ecs" | "ec2";
+  /** EC2 only: instance type. The image is built on the instance, so keep >= 4 GiB RAM. */
+  instanceType: string;
+  /** EC2 only: size in GiB of the separate EBS volume holding Postgres and uploaded files. */
+  dataVolumeGb: number;
+  /** EC2 only: email of the first admin user (the password is generated and kept in Secrets Manager). */
+  seedAdminEmail: string;
   /** Derived: true when envName === "prod". */
   isProd: boolean;
   /** Derived: base URL of the API. */
@@ -95,6 +103,10 @@ export function loadConfig(app: App): MailAppConfig {
     llmModel: str(app, "llmModel", "claude-opus-5"),
     sesDailyCap: num(app, "sesDailyCap", 2000),
     sesMaxSendRate: num(app, "sesMaxSendRate", 5),
+    deployTarget: str(app, "deployTarget", "ecs") === "ec2" ? "ec2" : "ecs",
+    instanceType: str(app, "instanceType", "t3.medium"),
+    dataVolumeGb: num(app, "dataVolumeGb", 30),
+    seedAdminEmail: str(app, "seedAdminEmail", "admin@example.com"),
     isProd: envName === "prod",
     publicBaseUrl: domainName ? `https://${domainName}` : "",
   };

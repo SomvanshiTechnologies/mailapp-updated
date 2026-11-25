@@ -6,11 +6,12 @@ import * as sns from "aws-cdk-lib/aws-sns";
 import * as cr from "aws-cdk-lib/custom-resources";
 import type { Construct } from "constructs";
 import type { MailAppConfig } from "../config.js";
-import type { DataStack } from "./data-stack.js";
+import type * as s3 from "aws-cdk-lib/aws-s3";
 
 export interface MessagingStackProps extends StackProps {
   config: MailAppConfig;
-  data: DataStack;
+  /** Only the bucket SES writes inbound mail to is needed (DataStack and StorageStack both provide it). */
+  data: { inboundBucket: s3.IBucket };
 }
 
 /** All SES event types the application ingests. Keep in sync with SES_EVENT_TYPES in packages/shared. */

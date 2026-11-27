@@ -11,7 +11,7 @@ import type {
   SuppressionReason,
   UserRole,
 } from "./enums.js";
-import type { Persona } from "./llm-schemas.js";
+import type { Persona, ResearchIssue, ResearchStatus } from "./llm-schemas.js";
 import type { CampaignAiConfig, HardRules, Sequence, Settings } from "./schemas.js";
 import type {
   BatchItemStatus,
@@ -326,6 +326,10 @@ export interface LeadDto {
   /** When the next approved/queued email for this lead is expected to go out (null if none). */
   nextSendAt: string | null;
   persona: Persona | null;
+  /** null until research has run at least once. */
+  researchStatus: ResearchStatus | null;
+  /** Why research is partial (empty when complete or not yet run). */
+  researchIssues: ResearchIssue[];
   matchedServices: MatchedService[] | null;
   lastError: string | null;
   /** Micro-dollars spent researching this lead. */

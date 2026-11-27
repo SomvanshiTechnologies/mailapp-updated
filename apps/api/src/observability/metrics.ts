@@ -20,6 +20,7 @@ export type MetricName =
   | "llm_batches_submitted"
   | "llm_batches_completed"
   | "research_completed"
+  | "research_partial"
   | "research_failures"
   | "drafts_created"
   | "drafts_rejected_by_validator"

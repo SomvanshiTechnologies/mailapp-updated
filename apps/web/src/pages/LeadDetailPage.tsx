@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatUsd, type LeadDetailDto, type LeadDto } from "@mailapp/shared";
+import {
+  formatUsd,
+  type EvidenceItem,
+  type LeadDetailDto,
+  type LeadDto,
+  type ResearchIssue,
+  type ResearchStatus,
+} from "@mailapp/shared";
 import { api } from "../lib/api";
 import { formatDate, fullName } from "../lib/format";
 import { useAuth } from "../hooks/useAuth";
@@ -150,7 +157,13 @@ export function LeadDetailPage() {
           <div className="card">
             <h2 className="mb-2 text-sm font-semibold">
               Persona {p && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-normal text-gray-600">confidence: {p.confidence}</span>}
+              {lead.researchStatus && <ResearchStatusBadge status={lead.researchStatus} />}
             </h2>
+            {lead.researchIssues.length > 0 && (
+              <p className="mb-2 text-xs text-amber-700">
+                Research gaps: {lead.researchIssues.map((i) => RESEARCH_ISSUE_LABELS[i] ?? i).join(" · ")}
+              </p>
+            )}
             {!p ? (
               <p className="text-sm text-gray-500">No research yet.</p>
             ) : (
@@ -171,6 +184,21 @@ export function LeadDetailPage() {
                 <PersonaList title="Likely priorities" items={p.likelyPriorities} />
                 <PersonaList title="Recent signals" items={p.recentSignals} />
                 <PersonaList title="Offering" items={p.companyOffering} />
+                <EvidenceList evidence={p.evidence ?? []} />
+                {(p.opportunities ?? []).length > 0 && (
+                  <div className="md:col-span-2">
+                    <div className="text-xs font-semibold text-gray-500">Opportunities (inferred)</div>
+                    <ul className="list-disc pl-4">
+                      {p.opportunities.map((o, i) => (
+                        <li key={i}>
+                          {o.opportunity}
+                          {o.relatedService && <span className="text-xs text-gray-500"> → {o.relatedService}</span>}
+                          <div className="text-xs text-gray-600">{o.rationale}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div>
                   <div className="text-xs font-semibold text-gray-500">Sources</div>
                   <ul className="list-disc pl-4 text-xs">
@@ -285,6 +313,52 @@ export function LeadDetailPage() {
           setPending(null);
         }}
       />
+    </div>
+  );
+}
+
+const RESEARCH_ISSUE_LABELS: Record<ResearchIssue, string> = {
+  no_website: "no website for this lead",
+  website_unavailable: "website could not be fetched",
+  no_sources: "no sources found",
+  few_verified_facts: "few verified facts",
+  low_confidence: "low confidence",
+  unsourced_claims_downgraded: "unsourced claims marked as inferred",
+};
+
+function ResearchStatusBadge({ status }: { status: ResearchStatus }) {
+  const cls =
+    status === "complete" ? "bg-green-100 text-green-800" : status === "partial" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
+  return <span className={`ml-2 rounded px-1.5 py-0.5 text-xs font-normal ${cls}`}>research: {status}</span>;
+}
+
+function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
+  if (evidence.length === 0) return null;
+  return (
+    <div className="md:col-span-2">
+      <div className="text-xs font-semibold text-gray-500">Evidence</div>
+      <ul className="space-y-1">
+        {evidence.map((e, i) => (
+          <li key={i} className="flex gap-2">
+            <span
+              className={`h-fit shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                e.basis === "verified" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"
+              }`}
+            >
+              {e.basis}
+            </span>
+            <span>
+              {e.claim}
+              {e.sourceUrl && (
+                <a className="ml-1 text-xs text-brand-700 hover:underline" href={e.sourceUrl} target="_blank" rel="noreferrer">
+                  source
+                </a>
+              )}
+              {e.excerpt && <div className="text-xs italic text-gray-500">“{e.excerpt}”</div>}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

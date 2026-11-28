@@ -11,7 +11,7 @@ import type {
   SuppressionReason,
   UserRole,
 } from "./enums.js";
-import type { Persona, ResearchIssue, ResearchStatus } from "./llm-schemas.js";
+import type { Persona, QualificationOutcome, QualificationResult, ResearchIssue, ResearchStatus } from "./llm-schemas.js";
 import type { CampaignAiConfig, HardRules, Sequence, Settings } from "./schemas.js";
 import type {
   BatchItemStatus,
@@ -107,6 +107,11 @@ export interface CampaignCounts {
   total: number;
   pending: number;
   researching: number;
+  /** Being qualified, or qualified and waiting for drafting. */
+  qualifying: number;
+  /** Needs more research or a human qualification decision. */
+  onHold: number;
+  unqualified: number;
   drafting: number;
   pendingReview: number;
   approved: number;
@@ -330,6 +335,9 @@ export interface LeadDto {
   researchStatus: ResearchStatus | null;
   /** Why research is partial (empty when complete or not yet run). */
   researchIssues: ResearchIssue[];
+  /** null until the lead has been qualified. */
+  qualificationStatus: QualificationOutcome | null;
+  qualification: QualificationResult | null;
   matchedServices: MatchedService[] | null;
   lastError: string | null;
   /** Micro-dollars spent researching this lead. */

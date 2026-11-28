@@ -1,6 +1,6 @@
 import type { HardRules, Persona, ResearchMode } from "@mailapp/shared";
 import type { LeadRow, ServiceRow } from "../../db/schema.js";
-import type { DraftInput, InstructionBundle, ResearchInput, WebsiteExtract } from "./provider.js";
+import type { DraftInput, InstructionBundle, QualifyInput, ResearchInput, WebsiteExtract } from "./provider.js";
 
 export function leadBlock(lead: LeadRow): string {
   const lines = [
@@ -100,6 +100,45 @@ List the key findings as evidence: each with VERIFIED (source URL + short quote)
 export const PERSONA_STRUCTURE_SYSTEM = `You convert research findings into a structured persona JSON. Copy facts faithfully from the findings; do not add new claims. If a field has no support in the findings, use an empty list or say "unknown".
 For "evidence", copy each finding with its label: basis "verified" only when the findings give a source URL for it (put that URL in sourceUrl and the supporting quote in excerpt); otherwise basis "inferred" with empty sourceUrl. Opportunities are always inferences.`;
 
+export const QUALIFY_SYSTEM = `You are a B2B sales qualification analyst. You decide whether a researched lead is worth contacting, and which one of our services (if any) fits them best.
+
+Rules:
+- Judge only from the numbered evidence, the research summary and the lead record. Do not use outside knowledge about the company.
+- VERIFIED evidence is a sourced fact. INFERRED evidence is an assumption: it can support a decision but never on its own justify "qualified".
+- Cite evidence by number (E1, E2, ...) in evidenceRefs. Only cite numbers that exist.
+- Pick the service from the catalogue by its exact id. If no service genuinely fits, leave serviceId and serviceName empty, set fitScore to 0 and explain in noServiceReason. Recommending nothing is better than a weak match.
+- Outcomes:
+  - qualified: matches the targeting criteria on verified evidence, and a service fits.
+  - unqualified: verified evidence shows a clear mismatch (wrong industry, size, region, or explicitly excluded).
+  - needs_research: too little verified evidence to judge either way.
+  - human_review: the evidence is mixed, borderline or contradictory; a person should decide.
+- Be honest and conservative. An unnecessary email costs our reputation.`;
+
+/** Evidence numbered E1..En, matching the indices the model cites back. */
+export function numberedEvidence(p: Persona): string {
+  const evidence = p.evidence ?? [];
+  if (evidence.length === 0) return "(no evidence items)";
+  return evidence
+    .map((e, i) => `E${i + 1} [${e.basis.toUpperCase()}${e.sourceUrl ? `, ${e.sourceUrl}` : ""}] (${e.category}) ${e.claim}`)
+    .join("\n");
+}
+
+export function qualifyUserMessage(input: QualifyInput): string {
+  const p = input.persona;
+  return [
+    `## Targeting criteria\n${input.targetingCriteria || "(none defined: judge fit against our company profile and the services' target audiences)"}`,
+    `## Our company profile\n${input.companyProfile || "(none provided)"}`,
+    `## Service catalogue\n${input.services.map((s) => serviceBlock(s)).join("\n\n") || "(no services)"}`,
+    `## Lead\n${leadBlock(input.lead)}`,
+    `## Research summary\nCompany: ${p.companySummary}\nIndustry: ${p.industry}\nSize: ${p.companySizeSignal}\nPerson: ${p.personRoleSummary}\nResearch confidence: ${p.confidence}\nResearch status: ${input.researchStatus ?? "unknown"}${
+      input.researchIssues.length ? ` (gaps: ${input.researchIssues.join(", ")})` : ""
+    }`,
+    `## Evidence\n${numberedEvidence(p)}`,
+    `## Opportunities suggested by research (inferred)\n${(p.opportunities ?? []).map((o) => `- ${o.opportunity}: ${o.rationale}`).join("\n") || "(none)"}`,
+    `Qualify this lead and match a service now.`,
+  ].join("\n\n");
+}
+
 export function draftSystemBlocks(instr: InstructionBundle, services: ServiceRow[], hardRules: HardRules): string[] {
   const blocks: string[] = [];
   blocks.push(`You write first-touch and follow-up B2B outreach emails on behalf of our company. You are precise, human, and never salesy. You never fabricate facts about the recipient; you only use facts present in the persona or the lead record. You write plain text (no markdown, no bullet lists unless the format guide allows them).
@@ -155,6 +194,12 @@ export function draftUserMessage(input: DraftInput): string {
     }\nStep guidance: ${input.step.guidance || "(none)"}`,
     `## Previous emails in this thread\n${prev}`,
   ];
+  const q = input.qualification;
+  if (q?.service) {
+    parts.push(
+      `## Recommended service (from qualification; pitch this one)\n${q.service.serviceName} (id ${q.service.serviceId}, fit ${q.service.fitScore}/10)\nWhy: ${q.service.rationale}`,
+    );
+  }
   if (input.campaignGuidance) parts.push(`## Campaign guidance\n${input.campaignGuidance}`);
   if (input.regenerationFeedback) {
     parts.push(`## Feedback on the previous draft (must be addressed)\n${input.regenerationFeedback}`);

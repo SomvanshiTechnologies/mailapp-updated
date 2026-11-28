@@ -57,6 +57,7 @@ export async function loadInstructionBundle(db: Db, ownerId: string | null = nul
     rules: byKind("rules"),
     signature: byKind("signature"),
     followupGuidance: byKind("followup_guidance"),
+    targetingCriteria: byKind("targeting_criteria"),
     other: byKind("other"),
   };
 }

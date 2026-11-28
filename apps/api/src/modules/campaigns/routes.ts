@@ -308,7 +308,7 @@ export async function campaignsRoutes(app: FastifyInstance, ctx: AppContext): Pr
 
 function emptyCounts() {
   return {
-    total: 0, pending: 0, researching: 0, drafting: 0, pendingReview: 0, approved: 0, sent: 0, delivered: 0,
+    total: 0, pending: 0, researching: 0, qualifying: 0, onHold: 0, unqualified: 0, drafting: 0, pendingReview: 0, approved: 0, sent: 0, delivered: 0,
     opened: 0, clicked: 0, replied: 0, bounced: 0, complained: 0, unsubscribed: 0, failed: 0, other: 0,
   };
 }

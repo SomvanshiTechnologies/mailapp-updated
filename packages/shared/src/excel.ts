@@ -24,6 +24,9 @@ export const LEAD_COLUMN_KEYS = Object.keys(LEAD_COLUMNS) as LeadColumnKey[];
 export const EXPORT_STATUS_COLUMNS = [
   "status",
   "current_step",
+  "research_status",
+  "qualification",
+  "qualification_reason",
   "matched_services",
   "subject",
   "ses_message_id",

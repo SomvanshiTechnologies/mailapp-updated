@@ -68,6 +68,74 @@ export const RESEARCH_ISSUES = [
 ] as const;
 export type ResearchIssue = (typeof RESEARCH_ISSUES)[number];
 
+// ---------- Qualification & service matching (LLM structured output) ----------
+export const QUALIFICATION_OUTCOMES = ["qualified", "unqualified", "needs_research", "human_review"] as const;
+export type QualificationOutcome = (typeof QUALIFICATION_OUTCOMES)[number];
+
+export const CRITERION_ASSESSMENTS = ["met", "not_met", "unknown"] as const;
+export type CriterionAssessment = (typeof CRITERION_ASSESSMENTS)[number];
+
+// Evidence is cited by number: E1 is persona.evidence[0], E2 is persona.evidence[1], and so on.
+export const QualificationOutputSchema = z.object({
+  outcome: z
+    .enum(QUALIFICATION_OUTCOMES)
+    .describe(
+      "qualified = good fit, worth contacting; unqualified = clearly not a fit; needs_research = not enough evidence to decide; human_review = mixed or borderline, a person should decide.",
+    ),
+  confidence: z.enum(["low", "medium", "high"]),
+  summary: z.string().describe("2-3 sentences explaining the decision."),
+  criteria: z
+    .array(
+      z.object({
+        criterion: z.string().describe("A targeting criterion or fit consideration, e.g. 'Industry is logistics'."),
+        assessment: z.enum(CRITERION_ASSESSMENTS),
+        evidenceRefs: z.array(z.number().int()).describe("Evidence numbers supporting the assessment, e.g. [1, 3] for E1 and E3."),
+        note: z.string(),
+      }),
+    )
+    .describe("How the lead measures against each criterion."),
+  serviceMatch: z.object({
+    serviceId: z.string().describe("Exact id of the best-fit service from the catalogue; empty string if none fits."),
+    serviceName: z.string().describe("Name of that service; empty string if none fits."),
+    fitScore: z.number().min(0).max(10).describe("0 = no fit, 10 = perfect fit."),
+    rationale: z.string().describe("Why this service fits this lead, referring to the evidence."),
+    evidenceRefs: z.array(z.number().int()).describe("Evidence numbers that support the recommendation."),
+  }),
+  noServiceReason: z.string().describe("If no service fits, why; empty string otherwise."),
+});
+export type QualificationOutput = z.infer<typeof QualificationOutputSchema>;
+
+/** The matched service after it has been checked against the real catalogue. */
+export interface ServiceRecommendation {
+  serviceId: string;
+  serviceName: string;
+  fitScore: number;
+  rationale: string;
+  /** The cited evidence items, copied from the persona so the record stands on its own. */
+  supportingEvidence: EvidenceItem[];
+}
+
+export type QualificationDecider = "ai" | "rules" | "human";
+
+/** What is stored on the lead after qualification. */
+export interface QualificationResult {
+  outcome: QualificationOutcome;
+  confidence: "low" | "medium" | "high";
+  summary: string;
+  criteria: Array<{ criterion: string; assessment: CriterionAssessment; evidence: EvidenceItem[]; note: string }>;
+  service: ServiceRecommendation | null;
+  noServiceReason: string;
+  /** Code-level rules that changed or overrode the model's answer, in plain words. */
+  adjustments: string[];
+  /** The model's own outcome, before any adjustment (null when no model was called). */
+  modelOutcome: QualificationOutcome | null;
+  decidedBy: QualificationDecider;
+  decidedAt: string;
+  /** Set when a person made or overrode the decision. */
+  decidedByUser: string | null;
+  model: string | null;
+}
+
 export const DraftOutputSchema = z.object({
   selectedServices: z
     .array(

@@ -14,14 +14,16 @@ import { formatDate, fullName } from "../lib/format";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
 import { StatusBadge } from "../components/StatusBadge";
+import { QualificationCard } from "../components/QualificationCard";
 import { ValidationIssues } from "../components/ReviewQueue";
 import { ConfirmDialog, ErrorBox, JsonView, KeyValue, PageHeader, Spinner } from "../components/ui";
 
-type Action = "retry" | "skip" | "mark-replied" | "unsubscribe" | "research";
+type Action = "retry" | "skip" | "mark-replied" | "unsubscribe" | "research" | "qualify";
 
 const ACTIONS: Array<{ key: Action; label: string; confirm: string; danger?: boolean }> = [
   { key: "retry", label: "Retry", confirm: "Re-queue research/drafting for this lead?" },
   { key: "research", label: "Re-research", confirm: "Run research again now? The persona will be replaced." },
+  { key: "qualify", label: "Re-qualify", confirm: "Run qualification and service matching again on the current research?" },
   { key: "mark-replied", label: "Mark replied", confirm: "Mark as replied and stop all follow-ups?" },
   { key: "skip", label: "Skip", confirm: "Skip this lead? No further emails will be sent." },
   { key: "unsubscribe", label: "Unsubscribe", confirm: "Add this address to the suppression list and stop all sending?", danger: true },
@@ -154,6 +156,7 @@ export function LeadDetailPage() {
         </div>
 
         <div className="space-y-4 xl:col-span-2">
+          <QualificationCard lead={lead} canWrite={canWrite} />
           <div className="card">
             <h2 className="mb-2 text-sm font-semibold">
               Persona {p && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-normal text-gray-600">confidence: {p.confidence}</span>}

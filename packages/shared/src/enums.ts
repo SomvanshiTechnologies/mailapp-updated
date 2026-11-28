@@ -40,6 +40,12 @@ export const LEAD_STATUSES = [
   "failed",
   "completed",
   "skipped",
+  // Qualification, between research and drafting. Appended so the Postgres enum only grows.
+  "qualifying",
+  "qualified",
+  "unqualified",
+  /** Waiting on a person: needs more research or a human qualification decision. */
+  "on_hold",
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
@@ -53,6 +59,8 @@ export const TERMINAL_LEAD_STATUSES: ReadonlySet<LeadStatus> = new Set<LeadStatu
   "rejected",
   "completed",
   "skipped",
+  // Not contacted automatically; an operator can still qualify the lead by hand.
+  "unqualified",
 ]);
 
 /** Statuses in which a lead is eligible for a follow-up step. */
@@ -103,6 +111,7 @@ export const INSTRUCTION_KINDS = [
   "rules",
   "signature",
   "followup_guidance",
+  "targeting_criteria",
   "other",
 ] as const;
 export type InstructionKind = (typeof INSTRUCTION_KINDS)[number];
@@ -128,6 +137,7 @@ export type FileKind = (typeof FILE_KINDS)[number];
 
 export const JOB_QUEUES = {
   research: "lead.research",
+  qualify: "lead.qualify",
   draft: "lead.draft",
   send: "email.send",
   followupTick: "followup.tick",

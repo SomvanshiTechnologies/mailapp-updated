@@ -27,6 +27,7 @@ import {
   LEAD_STATUSES,
   LLM_PROVIDERS,
   LLM_PURPOSES,
+  QUALIFICATION_OUTCOMES,
   RESEARCH_STATUSES,
   SES_EVENT_TYPES,
   SUPPRESSION_REASONS,
@@ -38,6 +39,7 @@ import type {
   ImportSummary,
   MatchedService,
   Persona,
+  QualificationResult,
   ResearchIssue,
   Sequence,
   ValidationResult,
@@ -48,6 +50,7 @@ export const campaignStatusEnum = pgEnum("campaign_status", CAMPAIGN_STATUSES);
 export const approvalModeEnum = pgEnum("approval_mode", APPROVAL_MODES);
 export const leadStatusEnum = pgEnum("lead_status", LEAD_STATUSES);
 export const researchStatusEnum = pgEnum("research_status", RESEARCH_STATUSES);
+export const qualificationStatusEnum = pgEnum("qualification_status", QUALIFICATION_OUTCOMES);
 export const emailStatusEnum = pgEnum("email_status", EMAIL_STATUSES);
 export const emailDirectionEnum = pgEnum("email_direction", EMAIL_DIRECTIONS);
 export const sesEventTypeEnum = pgEnum("ses_event_type", SES_EVENT_TYPES);
@@ -262,6 +265,9 @@ export const leads = pgTable(
     /** Outcome of the last research run; null until research has run. */
     researchStatus: researchStatusEnum("research_status"),
     researchIssues: jsonb("research_issues").$type<ResearchIssue[]>().notNull().default([]),
+    /** Outcome of qualification; null until the lead has been qualified. */
+    qualificationStatus: qualificationStatusEnum("qualification_status"),
+    qualification: jsonb("qualification").$type<QualificationResult>(),
     matchedServices: jsonb("matched_services").$type<MatchedService[]>(),
     lastError: text("last_error"),
     /** Rollups in micro-dollars, maintained as calls are recorded. */

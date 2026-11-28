@@ -42,6 +42,8 @@ export async function prepareDraft(
   if (!lead) return null;
   if (TERMINAL_LEAD_STATUSES.has(lead.status)) return null;
   if (!lead.persona) return null;
+  // Only qualified leads get a first email. Regenerating an existing draft is not blocked.
+  if (ctx.config.QUALIFICATION_ENABLED && job.step === 1 && !job.regenerate && lead.qualificationStatus !== "qualified") return null;
   const [campaign] = await ctx.db.select().from(campaigns).where(eq(campaigns.id, lead.campaignId)).limit(1);
   if (!campaign || campaign.status !== "active") return null;
 
@@ -52,14 +54,19 @@ export async function prepareDraft(
   const plan = resolveCampaignPlan(settings, campaign, { forceMock: ctx.config.LLM_PROVIDER === "mock" });
   const hardRules = await ctx.settings.effectiveHardRules(campaign.hardRulesOverride);
   const sender = await resolveSender(ctx, campaign);
-  const [bundle, services] = await Promise.all([
+  const [bundle, catalogue] = await Promise.all([
     loadInstructionBundle(ctx.db, sender.ownerId),
     listActiveServices(ctx, campaign.serviceIds ?? []),
   ]);
+  // When qualification matched a service, the email pitches that one only.
+  const matchedId = lead.qualification?.service?.serviceId;
+  const matchedOnly = matchedId ? catalogue.filter((s) => s.id === matchedId) : [];
+  const services = matchedOnly.length ? matchedOnly : catalogue;
   const previous = await previousEmails(ctx, lead.id);
   const input: DraftInput = {
     lead,
     persona: lead.persona,
+    qualification: lead.qualification ?? null,
     services,
     instructions: bundle,
     hardRules,
@@ -169,7 +176,12 @@ export async function applyDraftResult(
       })
       .returning();
     emailId = email.id;
-    await tx.update(leads).set({ status, matchedServices: matched, updatedAt: new Date() }).where(eq(leads.id, lead.id));
+    // A qualification match is the source of truth; only fall back to the drafter's pick.
+    const keepQualified = Boolean(lead.qualification?.service);
+    await tx
+      .update(leads)
+      .set({ status, ...(keepQualified ? {} : { matchedServices: matched }), updatedAt: new Date() })
+      .where(eq(leads.id, lead.id));
     if (status === "approved") {
       await ctx.queue.publish<SendJob>(JOB_QUEUES.send, { emailId: email.id }, { singletonKey: `send:${email.id}` });
     }

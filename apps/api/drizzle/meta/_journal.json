@@ -36,6 +36,13 @@
       "when": 1795756328432,
       "tag": "0004_evidence_based_research",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795760994914,
+      "tag": "0005_lead_qualification",
+      "breakpoints": true
     }
   ]
 }

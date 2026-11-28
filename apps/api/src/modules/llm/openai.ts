@@ -1,6 +1,14 @@
 import OpenAI from "openai";
 import { zodResponseFormat, zodTextFormat } from "openai/helpers/zod";
-import { DraftOutputSchema, PersonaSchema, ZERO_USAGE, type DraftOutput, type Persona } from "@mailapp/shared";
+import {
+  DraftOutputSchema,
+  PersonaSchema,
+  QualificationOutputSchema,
+  ZERO_USAGE,
+  type DraftOutput,
+  type Persona,
+  type QualificationOutput,
+} from "@mailapp/shared";
 import { AppError } from "../../lib/errors.js";
 import type { ResolvedModel } from "./catalogue.js";
 import {
@@ -11,9 +19,18 @@ import {
   type LlmResult,
   type LlmUsage,
   type PreparedRequest,
+  type QualifyInput,
   type ResearchInput,
 } from "./provider.js";
-import { PERSONA_STRUCTURE_SYSTEM, draftSystemBlocks, draftUserMessage, researchSystem, researchUserMessage } from "./prompts.js";
+import {
+  PERSONA_STRUCTURE_SYSTEM,
+  QUALIFY_SYSTEM,
+  draftSystemBlocks,
+  draftUserMessage,
+  qualifyUserMessage,
+  researchSystem,
+  researchUserMessage,
+} from "./prompts.js";
 import { recordLlmCall } from "./usage.js";
 
 /**
@@ -257,6 +274,50 @@ export class OpenAiAdapter implements LlmAdapter {
         error: describeOpenAiError(err),
         ...ids,
       });
+      throw normaliseOpenAiError(this.provider, err);
+    } finally {
+      release();
+    }
+  }
+
+  qualifyBody(input: QualifyInput): Record<string, unknown> {
+    const prompt = qualifyUserMessage(input);
+    const maxTokens = Math.min(6000, input.model.maxOutput);
+    if (this.dialect === "responses") {
+      return {
+        model: input.model.model,
+        instructions: QUALIFY_SYSTEM,
+        input: prompt,
+        max_output_tokens: maxTokens,
+        text: { format: zodTextFormat(QualificationOutputSchema, "qualification") },
+      };
+    }
+    return {
+      model: input.model.model,
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: QUALIFY_SYSTEM },
+        { role: "user", content: prompt },
+      ],
+      response_format: zodResponseFormat(QualificationOutputSchema, "qualification"),
+    };
+  }
+
+  async qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>> {
+    const release = await this.gate.acquire();
+    const started = Date.now();
+    let usage: LlmUsage = ZERO_USAGE;
+    const ids = { leadId: input.lead.id, campaignId: input.lead.campaignId };
+    try {
+      const res = await this.call(this.qualifyBody(input));
+      usage = res.usage;
+      const out = QualificationOutputSchema.parse(parseJson<unknown>(res.text, "Qualification"));
+      const durationMs = Date.now() - started;
+      const cost = await recordLlmCall(this.deps, { purpose: "qualify", model: input.model, usage, durationMs, stopReason: res.stopReason, ok: true, error: null, ...ids });
+      return { output: out, model: input.model.model, usage, durationMs, stopReason: res.stopReason, costMicroUsd: cost };
+    } catch (err) {
+      const durationMs = Date.now() - started;
+      await recordLlmCall(this.deps, { purpose: "qualify", model: input.model, usage, durationMs, stopReason: null, ok: false, error: describeOpenAiError(err), ...ids });
       throw normaliseOpenAiError(this.provider, err);
     } finally {
       release();

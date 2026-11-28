@@ -238,6 +238,9 @@ function Overview({ c }: { c: CampaignDto }) {
             [
               ["pending", "Pending"],
               ["researching", "Researching"],
+              ["qualifying", "Qualifying"],
+              ["onHold", "On hold"],
+              ["unqualified", "Unqualified"],
               ["drafting", "Drafting"],
               ["pendingReview", "Pending review"],
               ["approved", "Approved"],

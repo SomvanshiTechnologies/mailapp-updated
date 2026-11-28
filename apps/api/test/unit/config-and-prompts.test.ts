@@ -84,7 +84,7 @@ describe("prompts", () => {
   it("builds a stable system prefix and a per-lead user message", () => {
     const rules = HardRulesSchema.parse({ bannedPhrases: ["synergy"] });
     const blocks = draftSystemBlocks(
-      { companyProfile: "We are Ours.", tone: "", format: "", rules: "No pricing.", signature: "", followupGuidance: "", other: "" },
+      { companyProfile: "We are Ours.", tone: "", format: "", rules: "No pricing.", signature: "", followupGuidance: "", targetingCriteria: "", other: "" },
       [{ id: "s1", name: "Fleet", description: "d", targetAudience: "", valueProps: ["v"], proofPoints: [], tags: [], url: "" } as unknown as ServiceRow],
       rules,
     );
@@ -97,7 +97,7 @@ describe("prompts", () => {
       lead,
       persona,
       services: [],
-      instructions: { companyProfile: "", tone: "", format: "", rules: "", signature: "", followupGuidance: "", other: "" },
+      instructions: { companyProfile: "", tone: "", format: "", rules: "", signature: "", followupGuidance: "", targetingCriteria: "", other: "" },
       hardRules: rules,
       step: { step: 2, delayDays: 3, guidance: "bump", threaded: true },
       totalSteps: 3,

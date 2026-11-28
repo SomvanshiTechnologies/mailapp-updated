@@ -22,7 +22,7 @@ import { AppError } from "../../lib/errors.js";
 import { makeUnsubscribeToken } from "../../lib/crypto.js";
 import { nextSendWindow } from "../../lib/time.js";
 import { buildLeadImport, parseSheet, type ParsedSheet } from "../excel/import.js";
-import type { ResearchJob, DraftJob, SendJob } from "../../jobs/types.js";
+import type { ResearchJob, DraftJob, QualifyJob, SendJob } from "../../jobs/types.js";
 import { campaignCostDto } from "../analytics/cost.js";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -71,6 +71,8 @@ export function toLeadDto(l: LeadRow, nextSendAt: string | null = null): LeadDto
     persona: l.persona ?? null,
     researchStatus: l.researchStatus ?? null,
     researchIssues: l.researchIssues ?? [],
+    qualificationStatus: l.qualificationStatus ?? null,
+    qualification: l.qualification ?? null,
     matchedServices: l.matchedServices ?? null,
     lastError: l.lastError,
     researchMicroUsd: l.researchCostMicroUsd,
@@ -137,7 +139,7 @@ export function toCampaignDto(c: CampaignRow, counts: CampaignCounts, extras: Ca
 }
 
 const EMPTY_COUNTS: CampaignCounts = {
-  total: 0, pending: 0, researching: 0, drafting: 0, pendingReview: 0, approved: 0, sent: 0, delivered: 0,
+  total: 0, pending: 0, researching: 0, qualifying: 0, onHold: 0, unqualified: 0, drafting: 0, pendingReview: 0, approved: 0, sent: 0, delivered: 0,
   opened: 0, clicked: 0, replied: 0, bounced: 0, complained: 0, unsubscribed: 0, failed: 0, other: 0,
 };
 
@@ -155,6 +157,9 @@ export async function campaignCountsMap(ctx: AppContext, campaignIds: string[]):
     switch (r.status as LeadStatus) {
       case "pending": c.pending += r.count; break;
       case "researching": case "researched": c.researching += r.count; break;
+      case "qualifying": case "qualified": c.qualifying += r.count; break;
+      case "on_hold": c.onHold += r.count; break;
+      case "unqualified": c.unqualified += r.count; break;
       case "drafting": c.drafting += r.count; break;
       case "pending_review": c.pendingReview += r.count; break;
       case "approved": case "scheduled": case "sending": c.approved += r.count; break;
@@ -319,14 +324,25 @@ export async function enqueuePendingWork(ctx: AppContext, campaignId: string): P
   const rows = await ctx.db
     .select()
     .from(leads)
-    .where(and(eq(leads.campaignId, campaignId), inArray(leads.status, ["pending", "researching", "researched", "drafting", "approved", "scheduled"])))
+    .where(
+      and(
+        eq(leads.campaignId, campaignId),
+        inArray(leads.status, ["pending", "researching", "researched", "qualifying", "qualified", "drafting", "approved", "scheduled"]),
+      ),
+    )
     .orderBy(asc(leads.rowNumber));
   let n = 0;
   for (const lead of rows) {
+    const awaitingQualification =
+      ctx.config.QUALIFICATION_ENABLED &&
+      (lead.status === "qualifying" || (lead.status === "researched" && lead.qualificationStatus !== "qualified"));
     if (lead.status === "pending" || lead.status === "researching") {
       await ctx.queue.publish<ResearchJob>(JOB_QUEUES.research, { leadId: lead.id }, { singletonKey: `research:${lead.id}` });
       n++;
-    } else if (lead.status === "researched" || lead.status === "drafting") {
+    } else if (awaitingQualification) {
+      await ctx.queue.publish<QualifyJob>(JOB_QUEUES.qualify, { leadId: lead.id }, { singletonKey: `qualify:${lead.id}` });
+      n++;
+    } else if (lead.status === "researched" || lead.status === "qualified" || lead.status === "drafting") {
       const step = Math.max(1, lead.currentStep + 1);
       await ctx.queue.publish<DraftJob>(JOB_QUEUES.draft, { leadId: lead.id, step }, { singletonKey: `draft:${lead.id}:${step}` });
       n++;

@@ -21,6 +21,8 @@ export type MetricName =
   | "llm_batches_completed"
   | "research_completed"
   | "research_partial"
+  | "leads_qualified"
+  | "qualification_failures"
   | "research_failures"
   | "drafts_created"
   | "drafts_rejected_by_validator"

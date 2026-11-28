@@ -52,6 +52,14 @@ const EnvSchema = z.object({
   LLM_BATCH_MAX_POLL_ATTEMPTS: z.coerce.number().int().min(10).max(10_000).default(1500),
   /** Fetch the lead website before research (disabled in tests). */
   WEBSITE_FETCH_ENABLED: bool.default("true"),
+  /**
+   * Qualify researched leads (and match a service) before drafting. When off, research goes
+   * straight to drafting as before. Off by default in the test helper so older suites keep
+   * exercising the downstream stages.
+   */
+  QUALIFICATION_ENABLED: bool.default("true"),
+  /** A qualified lead whose best service scores below this goes to human review. */
+  QUALIFICATION_MIN_FIT_SCORE: z.coerce.number().min(0).max(10).default(5),
 
   AWS_REGION: z.string().default("us-east-1"),
   SES_MODE: z.enum(["ses", "mock"]).default("mock"),

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { JOB_QUEUES, TERMINAL_LEAD_STATUSES, type Persona, type TokenUsage } from "@mailapp/shared";
 import type { AppContext } from "../../context.js";
 import { campaigns, leads, type CampaignRow, type LeadRow } from "../../db/schema.js";
-import type { DraftJob, ResearchJob } from "../../jobs/types.js";
+import type { DraftJob, QualifyJob, ResearchJob } from "../../jobs/types.js";
 import { loadInstructionBundle } from "../instructions/service.js";
 import { listActiveServices } from "../services/routes.js";
 import { resolveCampaignPlan, type CampaignModelPlan } from "../llm/catalogue.js";
@@ -83,6 +83,9 @@ export async function applyResearchResult(
       persona: assessment.persona,
       researchStatus: assessment.status,
       researchIssues: assessment.issues,
+      // New research invalidates any earlier qualification decision.
+      qualificationStatus: null,
+      qualification: null,
       researchRaw: {
         findings: outcome.notes ?? null,
         website: website ? { url: website.url, title: website.title, fetchedAt: website.fetchedAt } : null,
@@ -97,7 +100,12 @@ export async function applyResearchResult(
     .where(eq(leads.id, lead.id));
   ctx.metrics.emit("research_completed");
   if (assessment.status === "partial") ctx.metrics.emit("research_partial");
-  await ctx.queue.publish<DraftJob>(JOB_QUEUES.draft, { leadId: lead.id, step: 1 }, { singletonKey: `draft:${lead.id}:1` });
+  if (ctx.config.QUALIFICATION_ENABLED) {
+    // Research → qualification → (qualified only) drafting.
+    await ctx.queue.publish<QualifyJob>(JOB_QUEUES.qualify, { leadId: lead.id }, { singletonKey: `qualify:${lead.id}:${Date.now()}` });
+  } else {
+    await ctx.queue.publish<DraftJob>(JOB_QUEUES.draft, { leadId: lead.id, step: 1 }, { singletonKey: `draft:${lead.id}:1` });
+  }
 }
 
 /** Mark a lead as failed with a message the review UI can show. */

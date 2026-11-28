@@ -421,5 +421,5 @@ export const OPEN_BATCH_STATUSES: ReadonlySet<BatchStatus> = new Set<BatchStatus
 export const BATCH_ITEM_STATUSES = ["pending", "submitted", "succeeded", "errored", "expired", "abandoned"] as const;
 export type BatchItemStatus = (typeof BATCH_ITEM_STATUSES)[number];
 
-export const LLM_PURPOSES = ["research", "persona", "draft"] as const;
+export const LLM_PURPOSES = ["research", "persona", "draft", "qualify"] as const;
 export type LlmPurpose = (typeof LLM_PURPOSES)[number];

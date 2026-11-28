@@ -15,6 +15,8 @@ const KIND_HELP: Record<InstructionKind, string> = {
   rules: "Hard do/don't rules the drafter must follow (claims to avoid, compliance).",
   signature: "The signature block appended to every email.",
   followup_guidance: "How follow-ups should differ from the first email.",
+  targeting_criteria:
+    "Who counts as a good lead: industries, company size, regions, roles, and exclusions. Used to qualify leads before any email is drafted.",
   other: "Any other guidance.",
 };
 

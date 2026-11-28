@@ -1,8 +1,9 @@
 import { JOB_QUEUES } from "@mailapp/shared";
 import type { AppContext } from "../context.js";
-import type { DraftJob, ResearchJob, SendJob, TickJob } from "./types.js";
+import type { DraftJob, QualifyJob, ResearchJob, SendJob, TickJob } from "./types.js";
 import { runResearchJob } from "../modules/pipeline/research.js";
 import { runDraftJob } from "../modules/pipeline/draft.js";
+import { runQualifyJob } from "../modules/pipeline/qualify.js";
 import { runSendJob } from "../modules/ses/sender.js";
 import { runFollowupTick } from "../modules/followups/scheduler.js";
 import { runSesSync } from "../modules/ses/sync.js";
@@ -28,6 +29,7 @@ function wrap<T extends object>(ctx: AppContext, name: string, fn: (data: T) => 
 export async function registerJobHandlers(ctx: AppContext): Promise<void> {
   const c = ctx.config;
   await ctx.queue.work<ResearchJob>(JOB_QUEUES.research, { concurrency: c.WORKER_RESEARCH_CONCURRENCY }, wrap(ctx, JOB_QUEUES.research, (d) => runResearchJob(ctx, d)));
+  await ctx.queue.work<QualifyJob>(JOB_QUEUES.qualify, { concurrency: c.WORKER_DRAFT_CONCURRENCY }, wrap(ctx, JOB_QUEUES.qualify, (d) => runQualifyJob(ctx, d)));
   await ctx.queue.work<DraftJob>(JOB_QUEUES.draft, { concurrency: c.WORKER_DRAFT_CONCURRENCY }, wrap(ctx, JOB_QUEUES.draft, (d) => runDraftJob(ctx, d)));
   await ctx.queue.work<SendJob>(JOB_QUEUES.send, { concurrency: c.WORKER_SEND_CONCURRENCY }, wrap(ctx, JOB_QUEUES.send, (d) => runSendJob(ctx, d)));
   await ctx.queue.work<TickJob>(JOB_QUEUES.followupTick, { concurrency: 1, pollingIntervalSeconds: 5 }, wrap(ctx, JOB_QUEUES.followupTick, () => runFollowupTick(ctx)));

@@ -1,6 +1,14 @@
 import { GoogleGenAI, type GenerateContentConfig, type GenerateContentResponse } from "@google/genai";
 import { z } from "zod/v4";
-import { DraftOutputSchema, PersonaSchema, ZERO_USAGE, type DraftOutput, type Persona } from "@mailapp/shared";
+import {
+  DraftOutputSchema,
+  PersonaSchema,
+  QualificationOutputSchema,
+  ZERO_USAGE,
+  type DraftOutput,
+  type Persona,
+  type QualificationOutput,
+} from "@mailapp/shared";
 import { AppError } from "../../lib/errors.js";
 import type { ResolvedModel } from "./catalogue.js";
 import {
@@ -11,9 +19,18 @@ import {
   type LlmResult,
   type LlmUsage,
   type PreparedRequest,
+  type QualifyInput,
   type ResearchInput,
 } from "./provider.js";
-import { PERSONA_STRUCTURE_SYSTEM, draftSystemBlocks, draftUserMessage, researchSystem, researchUserMessage } from "./prompts.js";
+import {
+  PERSONA_STRUCTURE_SYSTEM,
+  QUALIFY_SYSTEM,
+  draftSystemBlocks,
+  draftUserMessage,
+  qualifyUserMessage,
+  researchSystem,
+  researchUserMessage,
+} from "./prompts.js";
 import { parseOpenAiJson as parseJson } from "./openai.js";
 import { recordLlmCall } from "./usage.js";
 
@@ -44,6 +61,7 @@ function geminiSchema(schema: z.ZodType): Record<string, unknown> {
 
 const PERSONA_GEMINI_SCHEMA = geminiSchema(PersonaSchema);
 const DRAFT_GEMINI_SCHEMA = geminiSchema(DraftOutputSchema);
+const QUALIFICATION_GEMINI_SCHEMA = geminiSchema(QualificationOutputSchema);
 
 function usageOf(res: GenerateContentResponse): LlmUsage {
   const u = res.usageMetadata;
@@ -200,6 +218,37 @@ export class GeminiAdapter implements LlmAdapter {
         error: describeGeminiError(err),
         ...ids,
       });
+      throw normaliseGeminiError(err);
+    } finally {
+      release();
+    }
+  }
+
+  async qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>> {
+    const release = await this.gate.acquire();
+    const started = Date.now();
+    let usage: LlmUsage = ZERO_USAGE;
+    const ids = { leadId: input.lead.id, campaignId: input.lead.campaignId };
+    try {
+      const res = await this.client.models.generateContent({
+        model: input.model.model,
+        contents: qualifyUserMessage(input),
+        config: {
+          systemInstruction: QUALIFY_SYSTEM,
+          maxOutputTokens: Math.min(6000, input.model.maxOutput),
+          responseMimeType: "application/json",
+          responseJsonSchema: QUALIFICATION_GEMINI_SCHEMA,
+        },
+      });
+      usage = usageOf(res);
+      const out = QualificationOutputSchema.parse(parseJson<unknown>(textOf(res), "Qualification"));
+      const durationMs = Date.now() - started;
+      const stopReason = res.candidates?.[0]?.finishReason ?? null;
+      const cost = await recordLlmCall(this.deps, { purpose: "qualify", model: input.model, usage, durationMs, stopReason, ok: true, error: null, ...ids });
+      return { output: out, model: input.model.model, usage, durationMs, stopReason: null, costMicroUsd: cost };
+    } catch (err) {
+      const durationMs = Date.now() - started;
+      await recordLlmCall(this.deps, { purpose: "qualify", model: input.model, usage, durationMs, stopReason: null, ok: false, error: describeGeminiError(err), ...ids });
       throw normaliseGeminiError(err);
     } finally {
       release();

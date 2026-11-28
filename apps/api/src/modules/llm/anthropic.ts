@@ -2,7 +2,16 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { AutoParseableOutputFormat } from "@anthropic-ai/sdk/lib/parser";
 import type { ZodType } from "zod/v4";
-import { DraftOutputSchema, PersonaSchema, ZERO_USAGE, addUsage, type DraftOutput, type Persona } from "@mailapp/shared";
+import {
+  DraftOutputSchema,
+  PersonaSchema,
+  QualificationOutputSchema,
+  ZERO_USAGE,
+  addUsage,
+  type DraftOutput,
+  type Persona,
+  type QualificationOutput,
+} from "@mailapp/shared";
 import { AppError } from "../../lib/errors.js";
 import type { ResolvedModel } from "./catalogue.js";
 import {
@@ -13,9 +22,18 @@ import {
   type LlmResult,
   type LlmUsage,
   type PreparedRequest,
+  type QualifyInput,
   type ResearchInput,
 } from "./provider.js";
-import { PERSONA_STRUCTURE_SYSTEM, draftSystemBlocks, draftUserMessage, researchSystem, researchUserMessage } from "./prompts.js";
+import {
+  PERSONA_STRUCTURE_SYSTEM,
+  QUALIFY_SYSTEM,
+  draftSystemBlocks,
+  draftUserMessage,
+  qualifyUserMessage,
+  researchSystem,
+  researchUserMessage,
+} from "./prompts.js";
 import { recordLlmCall } from "./usage.js";
 
 function usageOf(msg: { usage: Anthropic.Usage }): LlmUsage {
@@ -212,6 +230,36 @@ export class AnthropicAdapter implements LlmAdapter {
         error: describeError(err),
         ...ids,
       });
+      throw normaliseError(err);
+    } finally {
+      release();
+    }
+  }
+
+  async qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>> {
+    const release = await this.gate.acquire();
+    const started = Date.now();
+    const ids = { leadId: input.lead.id, campaignId: input.lead.campaignId };
+    let usage: LlmUsage = ZERO_USAGE;
+    try {
+      const res = await this.client.messages.parse({
+        model: input.model.model,
+        max_tokens: Math.min(6000, input.model.maxOutput),
+        system: QUALIFY_SYSTEM,
+        thinking: { type: "adaptive" as const },
+        messages: [{ role: "user" as const, content: qualifyUserMessage(input) }],
+        output_config: { format: outputFormat(QualificationOutputSchema) },
+      } as never);
+      usage = usageOf(res);
+      if (res.stop_reason === "refusal") throw new AppError("llm_refusal", "Qualification request was refused by the model", 502);
+      const out = res.parsed_output as QualificationOutput | null;
+      if (!out) throw new AppError("llm_parse", "Qualification output did not match schema", 502);
+      const durationMs = Date.now() - started;
+      const cost = await recordLlmCall(this.deps, { purpose: "qualify", model: input.model, usage, durationMs, stopReason: res.stop_reason, ok: true, error: null, ...ids });
+      return { output: out, model: input.model.model, usage, durationMs, stopReason: res.stop_reason, costMicroUsd: cost };
+    } catch (err) {
+      const durationMs = Date.now() - started;
+      await recordLlmCall(this.deps, { purpose: "qualify", model: input.model, usage, durationMs, stopReason: null, ok: false, error: describeError(err), ...ids });
       throw normaliseError(err);
     } finally {
       release();

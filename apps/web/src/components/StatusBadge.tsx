@@ -12,6 +12,10 @@ const TONE: Record<string, string> = {
   researching: "bg-blue-50 text-blue-700",
   researched: "bg-blue-50 text-blue-700",
   drafting: "bg-blue-50 text-blue-700",
+  qualifying: "bg-blue-50 text-blue-700",
+  qualified: "bg-emerald-50 text-emerald-700",
+  on_hold: "bg-amber-50 text-amber-800",
+  unqualified: "bg-gray-100 text-gray-600",
   sending: "bg-blue-50 text-blue-700",
   active: "bg-blue-50 text-blue-700",
   // needs attention

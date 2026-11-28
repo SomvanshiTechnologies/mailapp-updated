@@ -1,8 +1,47 @@
-import type { DraftOutput, Persona } from "@mailapp/shared";
-import type { DraftInput, LlmAdapter, LlmDeps, LlmResult, PreparedRequest, ResearchInput } from "./provider.js";
+import type { DraftOutput, Persona, QualificationOutput } from "@mailapp/shared";
+import type { DraftInput, LlmAdapter, LlmDeps, LlmResult, PreparedRequest, QualifyInput, ResearchInput } from "./provider.js";
 import { recordLlmCall } from "./usage.js";
 
 const RESEARCH_USAGE = { inputTokens: 1200, outputTokens: 400, cacheReadTokens: 0, cacheWriteTokens: 0 };
+const QUALIFY_USAGE = { inputTokens: 900, outputTokens: 250, cacheReadTokens: 0, cacheWriteTokens: 0 };
+
+/**
+ * Deterministic qualification. Qualified with the first catalogue service when there is
+ * verified evidence; needs_research when there is none. Lead-note flags force other answers:
+ * mock:unqualified, mock:human-review, mock:no-service, mock:bad-service (an id not in the
+ * catalogue), mock:unsupported-service (cites only inferred evidence), mock:low-fit,
+ * mock:fail-qualify.
+ */
+export function mockQualification(input: QualifyInput, flag: (f: string) => boolean): QualificationOutput {
+  const evidence = input.persona.evidence ?? [];
+  const verifiedRefs = evidence.flatMap((e, i) => (e.basis === "verified" ? [i + 1] : []));
+  const inferredRefs = evidence.flatMap((e, i) => (e.basis === "verified" ? [] : [i + 1]));
+  const service = input.services[0];
+  let outcome: QualificationOutput["outcome"] = verifiedRefs.length ? "qualified" : "needs_research";
+  if (flag("unqualified")) outcome = "unqualified";
+  if (flag("human-review")) outcome = "human_review";
+  const noService = !service || flag("no-service") || outcome === "unqualified";
+  const refs = flag("unsupported-service") ? inferredRefs : verifiedRefs;
+  return {
+    outcome,
+    confidence: verifiedRefs.length >= 2 ? "medium" : "low",
+    summary: `Mock qualification for ${input.lead.company ?? input.lead.email}: ${outcome}.`,
+    criteria: [
+      { criterion: "Company is identifiable from verified sources", assessment: verifiedRefs.length ? "met" : "unknown", evidenceRefs: verifiedRefs.slice(0, 2), note: "" },
+      { criterion: "Industry matches targeting", assessment: outcome === "unqualified" ? "not_met" : "met", evidenceRefs: [], note: input.lead.industry ?? "" },
+    ],
+    serviceMatch: noService
+      ? { serviceId: "", serviceName: "", fitScore: 0, rationale: "", evidenceRefs: [] }
+      : {
+          serviceId: flag("bad-service") ? "00000000-0000-0000-0000-000000000000" : service.id,
+          serviceName: flag("bad-service") ? "Made Up Service" : service.name,
+          fitScore: flag("low-fit") ? 2 : 8,
+          rationale: `${service.name} addresses the needs suggested by the evidence.`,
+          evidenceRefs: refs,
+        },
+    noServiceReason: noService ? (service ? "No service fits this lead." : "The campaign has no services.") : "",
+  };
+}
 const DRAFT_USAGE = { inputTokens: 1500, outputTokens: 300, cacheReadTokens: 1000, cacheWriteTokens: 0 };
 
 /**
@@ -18,6 +57,23 @@ export class MockLlmAdapter implements LlmAdapter {
 
   private flag(input: { lead: { notes: string | null } }, f: string): boolean {
     return (input.lead.notes ?? "").includes(`mock:${f}`);
+  }
+
+  async qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>> {
+    const ids = { leadId: input.lead.id, campaignId: input.lead.campaignId };
+    const failed = this.flag(input, "fail-qualify");
+    await recordLlmCall(this.deps, {
+      purpose: "qualify",
+      model: input.model,
+      usage: QUALIFY_USAGE,
+      durationMs: 5,
+      stopReason: failed ? null : "end_turn",
+      ok: !failed,
+      error: failed ? "mock failure" : null,
+      ...ids,
+    });
+    if (failed) throw new Error("mock qualification failure");
+    return { output: mockQualification(input, (f) => this.flag(input, f)), model: input.model.model, usage: QUALIFY_USAGE, durationMs: 5, stopReason: "end_turn", costMicroUsd: 0 };
   }
 
   async research(input: ResearchInput): Promise<LlmResult<Persona>> {

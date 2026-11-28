@@ -26,7 +26,7 @@ export type Tone = "good" | "warning" | "critical" | "neutral";
 /** Sum of every campaign's lead counts (archived campaigns are left out by the caller). */
 export function sumCounts(list: CampaignCounts[]): CampaignCounts {
   const zero: CampaignCounts = {
-    total: 0, pending: 0, researching: 0, drafting: 0, pendingReview: 0, approved: 0, sent: 0, delivered: 0,
+    total: 0, pending: 0, researching: 0, qualifying: 0, onHold: 0, unqualified: 0, drafting: 0, pendingReview: 0, approved: 0, sent: 0, delivered: 0,
     opened: 0, clicked: 0, replied: 0, bounced: 0, complained: 0, unsubscribed: 0, failed: 0, other: 0,
   };
   for (const c of list) for (const k of Object.keys(zero) as Array<keyof CampaignCounts>) zero[k] += c[k];
@@ -109,10 +109,12 @@ interface Stage {
  * gone out (including those that later replied), so the bar for it can exceed the others.
  */
 export function PipelineCard({ counts }: { counts: CampaignCounts }) {
-  const stopped = counts.bounced + counts.complained + counts.unsubscribed + counts.failed + counts.other;
+  const stopped = counts.bounced + counts.complained + counts.unsubscribed + counts.failed + counts.unqualified + counts.other;
   const stages: Stage[] = [
     { key: "queued", label: "Awaiting research", value: counts.pending, hint: "Imported, not started" },
     { key: "research", label: "Researching", value: counts.researching, hint: "LLM is profiling the lead" },
+    { key: "qualify", label: "Qualifying", value: counts.qualifying, hint: "Checking fit and matching a service" },
+    { key: "hold", label: "On hold", value: counts.onHold, attention: counts.onHold > 0, hint: "Needs more research or a human decision" },
     { key: "draft", label: "Drafting", value: counts.drafting, hint: "Email being written" },
     { key: "review", label: "Pending review", value: counts.pendingReview, attention: counts.pendingReview > 0, hint: "Waiting for a reviewer" },
     { key: "approved", label: "Approved", value: counts.approved, hint: "Approved or sending" },
@@ -127,7 +129,7 @@ export function PipelineCard({ counts }: { counts: CampaignCounts }) {
       action={
         stopped > 0 ? (
           <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600">
-            {compactNumber(stopped)} stopped (bounced, failed, unsubscribed, other)
+            {compactNumber(stopped)} stopped (bounced, failed, unsubscribed, unqualified, other)
           </span>
         ) : undefined
       }

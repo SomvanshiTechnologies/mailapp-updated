@@ -51,6 +51,8 @@ export function testConfig(overrides: Partial<Record<string, string>> = {}): App
     SES_DAILY_CAP: "1000",
     SNS_VERIFY_SIGNATURES: "false",
     WEBSITE_FETCH_ENABLED: "false",
+    // Older suites exercise drafting and sending directly; the qualification suite turns this on.
+    QUALIFICATION_ENABLED: "false",
     STORAGE_DRIVER: "local",
     STORAGE_LOCAL_DIR: path.join(os.tmpdir(), `mailapp-test-storage-${process.pid}`),
     ...overrides,

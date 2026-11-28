@@ -1,4 +1,4 @@
-import type { DraftOutput, Persona } from "@mailapp/shared";
+import type { DraftOutput, Persona, QualificationOutput } from "@mailapp/shared";
 import { AppError } from "../../lib/errors.js";
 import type { AppConfig } from "../../config.js";
 import type { Db } from "../../db/client.js";
@@ -9,7 +9,7 @@ import { ProviderCredentialStore } from "./credentials.js";
 import { GeminiAdapter } from "./gemini.js";
 import { MockLlmAdapter } from "./mock.js";
 import { OpenAiAdapter } from "./openai.js";
-import type { DraftInput, LlmAdapter, LlmDeps, LlmProvider, LlmResult, ResearchInput } from "./provider.js";
+import type { DraftInput, LlmAdapter, LlmDeps, LlmProvider, LlmResult, QualifyInput, ResearchInput } from "./provider.js";
 
 /**
  * Dispatches each call to the adapter for the model's provider, building adapters on first
@@ -73,6 +73,11 @@ export class LlmRouter implements LlmProvider {
   async research(input: ResearchInput): Promise<LlmResult<Persona>> {
     const adapter = await this.require(input.model.provider, input.model.label);
     return adapter.research(input);
+  }
+
+  async qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>> {
+    const adapter = await this.require(input.model.provider, input.model.label);
+    return adapter.qualify(input);
   }
 
   async draft(input: DraftInput): Promise<LlmResult<DraftOutput>> {

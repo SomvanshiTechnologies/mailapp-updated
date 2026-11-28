@@ -2,6 +2,10 @@ export interface ResearchJob {
   leadId: string;
 }
 
+export interface QualifyJob {
+  leadId: string;
+}
+
 export interface DraftJob {
   leadId: string;
   step: number;

@@ -158,6 +158,9 @@ export async function buildStatusWorkbook(
     const email = latestEmailByLead.get(lead.id);
     row.status = lead.status;
     row.current_step = lead.currentStep;
+    row.research_status = lead.researchStatus ?? "";
+    row.qualification = lead.qualificationStatus ?? "";
+    row.qualification_reason = lead.qualification?.summary ?? "";
     row.matched_services = (lead.matchedServices ?? []).map((m) => `${m.serviceName} (${m.fitScore})`).join("; ");
     row.subject = email?.subject ?? "";
     row.ses_message_id = email?.sesMessageId ?? "";

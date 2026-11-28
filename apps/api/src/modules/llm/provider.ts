@@ -1,4 +1,17 @@
-import type { DraftOutput, HardRules, LlmPurpose, Persona, ResearchMode, ResearchModeProfile, SequenceStep, TokenUsage } from "@mailapp/shared";
+import type {
+  DraftOutput,
+  HardRules,
+  LlmPurpose,
+  Persona,
+  QualificationOutput,
+  QualificationResult,
+  ResearchIssue,
+  ResearchMode,
+  ResearchModeProfile,
+  ResearchStatus,
+  SequenceStep,
+  TokenUsage,
+} from "@mailapp/shared";
 import type { AppConfig } from "../../config.js";
 import type { Db } from "../../db/client.js";
 import type { Logger } from "../../observability/logger.js";
@@ -38,6 +51,8 @@ export interface InstructionBundle {
   rules: string;
   signature: string;
   followupGuidance: string;
+  /** Who counts as a good lead; used by qualification. Empty when none is defined. */
+  targetingCriteria: string;
   other: string;
 }
 
@@ -52,6 +67,18 @@ export interface ResearchInput {
   profile: ResearchModeProfile;
   researchMode: ResearchMode;
   webSearch: boolean;
+}
+
+export interface QualifyInput {
+  lead: LeadRow;
+  persona: Persona;
+  researchStatus: ResearchStatus | null;
+  researchIssues: ResearchIssue[];
+  /** The campaign's active services: the catalogue the model must choose from. */
+  services: ServiceRow[];
+  companyProfile: string;
+  targetingCriteria: string;
+  model: ResolvedModel;
 }
 
 export interface PreviousEmail {
@@ -73,6 +100,8 @@ export interface DraftInput {
   previousEmails: PreviousEmail[];
   campaignGuidance: string;
   regenerationFeedback: string | null;
+  /** The qualification decision, when qualification ran; the drafter pitches its service. */
+  qualification: QualificationResult | null;
   senderName: string;
   model: ResolvedModel;
 }
@@ -95,6 +124,7 @@ export interface PreparedRequest {
 export interface LlmAdapter {
   readonly provider: "anthropic" | "openai" | "gemini" | "deepseek" | "mock";
   research(input: ResearchInput): Promise<LlmResult<Persona>>;
+  qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>>;
   draft(input: DraftInput): Promise<LlmResult<DraftOutput>>;
   /** Build the request a batch item will carry. Only needed when the provider batches. */
   prepareResearch?(input: ResearchInput): PreparedRequest;
@@ -107,6 +137,7 @@ export interface LlmAdapter {
 export interface LlmProvider {
   readonly name: string;
   research(input: ResearchInput): Promise<LlmResult<Persona>>;
+  qualify(input: QualifyInput): Promise<LlmResult<QualificationOutput>>;
   draft(input: DraftInput): Promise<LlmResult<DraftOutput>>;
   /** Adapter for a provider, or null when no key is configured. */
   adapterFor(provider: string): Promise<LlmAdapter | null>;

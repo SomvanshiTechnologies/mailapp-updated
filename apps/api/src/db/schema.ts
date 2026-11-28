@@ -27,6 +27,7 @@ import {
   LEAD_STATUSES,
   LLM_PROVIDERS,
   LLM_PURPOSES,
+  RESEARCH_STATUSES,
   SES_EVENT_TYPES,
   SUPPRESSION_REASONS,
   USER_ROLES,
@@ -37,6 +38,7 @@ import type {
   ImportSummary,
   MatchedService,
   Persona,
+  ResearchIssue,
   Sequence,
   ValidationResult,
 } from "@mailapp/shared";
@@ -45,6 +47,7 @@ export const userRoleEnum = pgEnum("user_role", USER_ROLES);
 export const campaignStatusEnum = pgEnum("campaign_status", CAMPAIGN_STATUSES);
 export const approvalModeEnum = pgEnum("approval_mode", APPROVAL_MODES);
 export const leadStatusEnum = pgEnum("lead_status", LEAD_STATUSES);
+export const researchStatusEnum = pgEnum("research_status", RESEARCH_STATUSES);
 export const emailStatusEnum = pgEnum("email_status", EMAIL_STATUSES);
 export const emailDirectionEnum = pgEnum("email_direction", EMAIL_DIRECTIONS);
 export const sesEventTypeEnum = pgEnum("ses_event_type", SES_EVENT_TYPES);
@@ -256,6 +259,9 @@ export const leads = pgTable(
     nextActionAt: timestamp("next_action_at", { withTimezone: true }),
     persona: jsonb("persona").$type<Persona>(),
     researchRaw: jsonb("research_raw").$type<Record<string, unknown>>(),
+    /** Outcome of the last research run; null until research has run. */
+    researchStatus: researchStatusEnum("research_status"),
+    researchIssues: jsonb("research_issues").$type<ResearchIssue[]>().notNull().default([]),
     matchedServices: jsonb("matched_services").$type<MatchedService[]>(),
     lastError: text("last_error"),
     /** Rollups in micro-dollars, maintained as calls are recorded. */

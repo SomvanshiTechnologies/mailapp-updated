@@ -49,6 +49,7 @@ Ground rules:
 - Never invent facts. If something is unknown, say so explicitly and lower your confidence.
 - Distinguish the company from similarly named companies; use the website domain and location to disambiguate.
 - Keep findings concrete: products, customers, pricing model, team size signals, hiring, recent launches, funding, partnerships, tech stack signals, public statements by the person.
+- Label every finding VERIFIED or INFERRED. VERIFIED means a page you read states it; give that page's URL and a short quote. INFERRED means it is your reasoning or an assumption (likely priorities, pain points and opportunities are almost always inferred). Never label something verified without a URL.
 - Be concise. Bullet points are fine.`;
 
 /**
@@ -92,10 +93,12 @@ ${
     ? `Use web search (and fetch pages when useful) to verify and enrich the above. You may run at most ${input.profile.maxSearches} searches and fetch at most ${input.profile.maxFetches} pages, so choose them deliberately.`
     : "Do not use external tools; work from the material above and general knowledge, and be explicit about uncertainty."
 }
-Produce research findings covering: what the company does and for whom; its offering; industry; size/stage signals with evidence; what this person's role likely owns; their likely priorities right now; plausible pain points relevant to our services; recent signals (news, hiring, launches, funding) with dates and URLs; specific personalisation hooks that are verifiable; sources consulted; overall confidence; caveats.`;
+Produce research findings covering: what the company does and for whom; its offering; industry; size/stage signals with evidence; what this person's role likely owns; their likely priorities right now; plausible pain points relevant to our services; recent signals (news, hiring, launches, funding) with dates and URLs; specific personalisation hooks that are verifiable; 1-3 business opportunities for us with the reasoning behind each; sources consulted; overall confidence; caveats.
+List the key findings as evidence: each with VERIFIED (source URL + short quote) or INFERRED. If the website could not be fetched or little information exists, say so plainly rather than filling gaps with guesses.`;
 }
 
-export const PERSONA_STRUCTURE_SYSTEM = `You convert research findings into a structured persona JSON. Copy facts faithfully from the findings; do not add new claims. If a field has no support in the findings, use an empty list or say "unknown".`;
+export const PERSONA_STRUCTURE_SYSTEM = `You convert research findings into a structured persona JSON. Copy facts faithfully from the findings; do not add new claims. If a field has no support in the findings, use an empty list or say "unknown".
+For "evidence", copy each finding with its label: basis "verified" only when the findings give a source URL for it (put that URL in sourceUrl and the supporting quote in excerpt); otherwise basis "inferred" with empty sourceUrl. Opportunities are always inferences.`;
 
 export function draftSystemBlocks(instr: InstructionBundle, services: ServiceRow[], hardRules: HardRules): string[] {
   const blocks: string[] = [];
@@ -173,7 +176,25 @@ export function personaBlock(p: Persona): string {
     `Pain points: ${p.painPoints.join("; ")}`,
     `Recent signals: ${p.recentSignals.join("; ") || "(none)"}`,
     `Personalisation hooks: ${p.personalisationHooks.join("; ") || "(none)"}`,
+    ...evidenceLines(p),
     `Confidence: ${p.confidence}`,
     `Notes: ${p.notes}`,
   ].join("\n");
+}
+
+/**
+ * Evidence split into verified facts and inferences, so the drafter states only verified items
+ * as facts. Personas stored before evidence existed have no `evidence` and add nothing.
+ */
+function evidenceLines(p: Persona): string[] {
+  const evidence = p.evidence ?? [];
+  const opportunities = p.opportunities ?? [];
+  if (evidence.length === 0 && opportunities.length === 0) return [];
+  const verified = evidence.filter((e) => e.basis === "verified");
+  const inferred = evidence.filter((e) => e.basis !== "verified");
+  return [
+    `Verified facts (safe to state as fact): ${verified.map((e) => `${e.claim} [${e.sourceUrl}]`).join("; ") || "(none)"}`,
+    `Inferences (do NOT state as fact; hedge or omit): ${inferred.map((e) => e.claim).join("; ") || "(none)"}`,
+    `Opportunities (inferred): ${opportunities.map((o) => `${o.opportunity}${o.relatedService ? ` -> ${o.relatedService}` : ""}`).join("; ") || "(none)"}`,
+  ];
 }

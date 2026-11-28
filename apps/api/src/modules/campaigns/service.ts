@@ -69,6 +69,8 @@ export function toLeadDto(l: LeadRow, nextSendAt: string | null = null): LeadDto
     nextActionAt: iso(l.nextActionAt),
     nextSendAt,
     persona: l.persona ?? null,
+    researchStatus: l.researchStatus ?? null,
+    researchIssues: l.researchIssues ?? [],
     matchedServices: l.matchedServices ?? null,
     lastError: l.lastError,
     researchMicroUsd: l.researchCostMicroUsd,

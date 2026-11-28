@@ -9,6 +9,7 @@ import { resolveCampaignPlan, type CampaignModelPlan } from "../llm/catalogue.js
 import type { ResearchInput, WebsiteExtract } from "../llm/provider.js";
 import { queueBatchItem } from "../llm/batch/queue.js";
 import { fetchWebsiteExtract, normaliseWebsiteUrl } from "./website.js";
+import { assessResearch } from "./evidence.js";
 
 export interface PreparedResearch {
   lead: LeadRow;
@@ -62,6 +63,10 @@ export interface ResearchOutcome {
 /**
  * Store a completed persona and hand the lead over to drafting. Shared by the synchronous
  * path and the batch runner, so a batched lead ends in exactly the same state.
+ *
+ * The persona is first run through the evidence rules (unsourced "verified" claims become
+ * "inferred") and graded complete or partial. Partial research still moves on to drafting;
+ * the status and issues are stored so reviewers and later modules can see the gaps.
  */
 export async function applyResearchResult(
   ctx: AppContext,
@@ -69,14 +74,19 @@ export async function applyResearchResult(
   website: WebsiteExtract | null,
   outcome: ResearchOutcome,
 ): Promise<void> {
+  const websiteAttempted = Boolean(ctx.config.WEBSITE_FETCH_ENABLED && normaliseWebsiteUrl(lead.website, lead.email));
+  const assessment = assessResearch(outcome.persona, { websiteAttempted, websiteFetched: website !== null });
   await ctx.db
     .update(leads)
     .set({
       status: "researched",
-      persona: outcome.persona,
+      persona: assessment.persona,
+      researchStatus: assessment.status,
+      researchIssues: assessment.issues,
       researchRaw: {
         findings: outcome.notes ?? null,
         website: website ? { url: website.url, title: website.title, fetchedAt: website.fetchedAt } : null,
+        quality: { verifiedCount: assessment.verifiedCount, inferredCount: assessment.inferredCount },
         model: outcome.model,
         usage: outcome.usage,
         durationMs: outcome.durationMs,
@@ -86,6 +96,7 @@ export async function applyResearchResult(
     })
     .where(eq(leads.id, lead.id));
   ctx.metrics.emit("research_completed");
+  if (assessment.status === "partial") ctx.metrics.emit("research_partial");
   await ctx.queue.publish<DraftJob>(JOB_QUEUES.draft, { leadId: lead.id, step: 1 }, { singletonKey: `draft:${lead.id}:1` });
 }
 
@@ -93,7 +104,13 @@ export async function applyResearchResult(
 export async function failLead(ctx: AppContext, leadId: string, prefix: string, message: string): Promise<void> {
   await ctx.db
     .update(leads)
-    .set({ status: "failed", lastError: `${prefix}: ${message}`.slice(0, 2000), updatedAt: new Date() })
+    .set({
+      status: "failed",
+      // A failed research run leaves no usable persona; record that for downstream modules.
+      ...(prefix === "research" ? { researchStatus: "failed" as const } : {}),
+      lastError: `${prefix}: ${message}`.slice(0, 2000),
+      updatedAt: new Date(),
+    })
     .where(eq(leads.id, leadId));
 }
 
